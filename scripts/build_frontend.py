@@ -1,0 +1,2302 @@
+import os
+
+html_content = r'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能客服系统 - 多角色权限与知识库工作台</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 3 -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    [v-cloak] { display: none; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f8fafc; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans antialiased h-screen overflow-hidden">
+  <div id="app" v-cloak class="h-screen w-screen overflow-hidden">
+
+    <!-- ================= 0. 全屏现代化登录页面 ================= -->
+    <div v-if="!isLoggedIn" class="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 p-6 relative overflow-hidden select-none">
+      <!-- 背景光晕装饰 -->
+      <div class="absolute -top-32 -left-32 w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="absolute -bottom-32 -right-32 w-96 h-96 bg-sky-500/20 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div class="w-full max-w-md bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-8 shadow-2xl text-white relative z-10 space-y-6">
+        
+        <!-- 登录头部 -->
+        <div class="text-center space-y-2">
+          <div class="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-indigo-500 to-sky-400 flex items-center justify-center text-white text-2xl font-bold shadow-lg shadow-indigo-500/30">
+            🤖
+          </div>
+          <h1 class="text-2xl font-bold tracking-tight text-white">智能客服知识库系统</h1>
+          <p class="text-xs text-slate-300">多产品隔离 · 智能问答与业务闭环 · 角色专属工作台</p>
+        </div>
+
+        <!-- 错误提示 -->
+        <div v-if="loginError" class="bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs px-3.5 py-2.5 rounded-xl flex items-center gap-2">
+          <span>⚠️</span>
+          <span>{{ loginError }}</span>
+        </div>
+
+        <!-- 登录表单 -->
+        <form @submit.prevent="handleLoginSubmit" class="space-y-4 text-xs">
+          <div>
+            <label class="block font-medium text-slate-300 mb-1.5">登录账号</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400 pointer-events-none">👤</span>
+              <input 
+                v-model="loginForm.username" 
+                type="text" 
+                required 
+                placeholder="请输入用户名 (如 admin / tech / user)" 
+                class="w-full bg-slate-900/60 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-medium text-slate-300 mb-1.5">登录密码</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400 pointer-events-none">🔒</span>
+              <input 
+                v-model="loginForm.password" 
+                type="password" 
+                required 
+                placeholder="请输入密码" 
+                class="w-full bg-slate-900/60 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+              />
+            </div>
+          </div>
+
+          <button 
+            type="submit" 
+            :disabled="loginLoading"
+            class="w-full bg-gradient-to-r from-indigo-500 to-sky-500 hover:from-indigo-600 hover:to-sky-600 text-white font-semibold py-2.5 rounded-xl shadow-lg shadow-indigo-500/25 transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <span v-if="loginLoading" class="animate-spin">⏳</span>
+            <span>{{ loginLoading ? '正在验证身份...' : '登 录 系 统' }}</span>
+          </button>
+        </form>
+
+        <!-- 快捷登录体验入口 -->
+        <div class="pt-4 border-t border-white/10 text-xs">
+          <p class="text-[11px] text-slate-400 font-medium mb-2.5 text-center">快捷体验账号（一键填入并登录）</p>
+          <div class="grid grid-cols-3 gap-2">
+            <button 
+              type="button" 
+              @click="quickFillLogin('admin', 'admin123')"
+              class="bg-white/5 hover:bg-white/15 border border-white/10 rounded-xl p-2.5 text-center transition group cursor-pointer"
+            >
+              <div class="text-base group-hover:scale-110 transition">👑</div>
+              <div class="font-bold text-white text-[11px] mt-1">超级管理员</div>
+              <div class="text-[9px] text-slate-400 font-mono">admin / admin123</div>
+            </button>
+            <button 
+              type="button" 
+              @click="quickFillLogin('tech', 'tech123')"
+              class="bg-white/5 hover:bg-white/15 border border-white/10 rounded-xl p-2.5 text-center transition group cursor-pointer"
+            >
+              <div class="text-base group-hover:scale-110 transition">👩‍💼</div>
+              <div class="font-bold text-white text-[11px] mt-1">SaaS技术客服</div>
+              <div class="text-[9px] text-slate-400 font-mono">tech / tech123</div>
+            </button>
+            <button 
+              type="button" 
+              @click="quickFillLogin('user', 'user123')"
+              class="bg-white/5 hover:bg-white/15 border border-white/10 rounded-xl p-2.5 text-center transition group cursor-pointer"
+            >
+              <div class="text-base group-hover:scale-110 transition">👤</div>
+              <div class="font-bold text-white text-[11px] mt-1">普通用户</div>
+              <div class="text-[9px] text-slate-400 font-mono">user / user123</div>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ================= 登录后的主工作台 ================= -->
+    <div v-else class="flex h-screen w-full relative">
+
+      <!-- 客服专员新客户分配实时提醒 Toast 弹窗 -->
+      <div v-if="newAssignmentAlert" class="fixed top-5 right-5 z-50 bg-white border border-indigo-200 shadow-2xl rounded-2xl p-4 max-w-sm animate-bounce duration-500 flex items-start gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-lg flex-shrink-0">
+          🔔
+        </div>
+        <div class="flex-1 min-w-0">
+          <h4 class="text-xs font-bold text-slate-900">新客户接入分配提醒！</h4>
+          <p class="text-[11px] text-slate-600 mt-1">
+            客户 <strong class="text-indigo-600">{{ newAssignmentAlert.customer_name }}</strong> 发起了人工咨询需求（产品: {{ newAssignmentAlert.product_code }}）。
+          </p>
+          <div class="flex items-center gap-2 mt-2.5">
+            <button @click="handleJumpToAssignedSession(newAssignmentAlert)" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition cursor-pointer">
+              立即跳转接听
+            </button>
+            <button @click="newAssignmentAlert = null" class="px-2 py-1 text-slate-400 hover:text-slate-600 text-[11px] cursor-pointer">
+              稍后处理
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 1. 左侧统一主菜单栏 (受角色权限管控) ================= -->
+      <aside class="w-64 bg-slate-900 text-slate-200 flex flex-col flex-shrink-0 border-r border-slate-800 select-none">
+        
+        <!-- 品牌与当前角色标识 -->
+        <div class="h-16 flex items-center px-5 gap-3 border-b border-slate-800 bg-slate-950/60">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-sky-400 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/20 text-xs">
+            CS
+          </div>
+          <div class="flex-1 min-w-0">
+            <h1 class="text-xs font-bold tracking-wide text-white leading-tight truncate">智能客服系统</h1>
+            <p class="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+              <span class="w-1.5 h-1.5 rounded-full" :class="currentRole === 'admin' ? 'bg-rose-400' : (currentRole === 'tech_agent' ? 'bg-amber-400' : 'bg-emerald-400')"></span>
+              <span>{{ roleLabel }}工作台</span>
+            </p>
+          </div>
+        </div>
+
+        <!-- 导航链接：根据三种角色严格区分可见性 -->
+        <nav class="flex-1 px-3 py-4 space-y-1.5">
+          
+          <!-- 菜单 1: AI客服对话 (普通用户、技术客服、超级管理员均可见) -->
+          <button 
+            v-if="hasMenuPermission('chat')"
+            @click="activeMenu = 'chat'" 
+            :class="activeMenu === 'chat' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'"
+            class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition duration-150 text-left cursor-pointer"
+          >
+            <span class="text-base">🤖</span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <span>AI客服对话</span>
+                <span class="text-[9px] bg-emerald-500/30 text-emerald-200 px-1.5 py-0.2 rounded-full font-mono">通用</span>
+              </div>
+              <p class="text-[10px] opacity-75 mt-0.5 font-normal">
+                {{ currentRole === 'user' ? '在线智能答疑' : '客户进线接待与工单协同' }}
+              </p>
+            </div>
+          </button>
+
+          <!-- 菜单 2: 知识库管理 (仅 超级管理员 可见) -->
+          <button 
+            v-if="hasMenuPermission('kb')"
+            @click="activeMenu = 'kb'" 
+            :class="activeMenu === 'kb' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'"
+            class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition duration-150 text-left cursor-pointer"
+          >
+            <span class="text-base">📚</span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <span>知识库管理</span>
+                <span class="text-[9px] bg-rose-500/30 text-rose-200 px-1.5 py-0.2 rounded-full font-mono">超管专属</span>
+              </div>
+              <p class="text-[10px] opacity-75 mt-0.5 font-normal">多产品隔离与检索阈值治理</p>
+            </div>
+          </button>
+
+          <!-- 菜单 3: 知识片段管理 (技术客服 与 超级管理员 可见，普通用户不可见) -->
+          <button 
+            v-if="hasMenuPermission('chunks')"
+            @click="activeMenu = 'chunks'" 
+            :class="activeMenu === 'chunks' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'"
+            class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition duration-150 text-left cursor-pointer"
+          >
+            <span class="text-base">🧩</span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <span>知识片段管理</span>
+                <span class="text-[9px] bg-amber-500/30 text-amber-200 px-1.5 py-0.2 rounded-full font-mono">坐席/超管</span>
+              </div>
+              <p class="text-[10px] opacity-75 mt-0.5 font-normal">
+                {{ currentRole === 'admin' ? '文档审核/切片管理/版本回滚' : '本产品文档提交/切片查询' }}
+              </p>
+            </div>
+          </button>
+        </nav>
+
+        <!-- 底部：当前登录用户身份卡片 & 退出登录按钮 -->
+        <div class="p-3.5 border-t border-slate-800/80 bg-slate-950/60 space-y-3">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shadow-sm"
+                 :class="currentRole === 'admin' ? 'bg-rose-600 text-white' : (currentRole === 'tech_agent' ? 'bg-amber-600 text-white' : 'bg-indigo-600 text-white')">
+              {{ currentRole === 'admin' ? '👑' : (currentRole === 'tech_agent' ? '👩‍💼' : '👤') }}
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-bold text-white truncate">{{ currentUserDisplayName }}</p>
+              <p class="text-[10px] text-slate-400 font-mono truncate">
+                账号: {{ currentUsername }} <span v-if="currentUserProduct" class="text-indigo-400 font-semibold">({{ currentUserProduct }})</span>
+              </p>
+            </div>
+          </div>
+          <button 
+            @click="handleLogout"
+            class="w-full flex items-center justify-center gap-1.5 py-2 bg-slate-800/80 hover:bg-rose-950/60 hover:text-rose-300 text-slate-300 border border-slate-700/60 hover:border-rose-800/60 rounded-xl text-xs font-medium transition cursor-pointer"
+          >
+            <span>🚪</span>
+            <span>退出当前账号</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- ================= 2. 主体工作区 ================= -->
+      <main class="flex-1 flex flex-col h-screen overflow-hidden bg-white">
+
+        <!-- ================= 模块 1: AI客服对话 ================= -->
+        <section v-if="activeMenu === 'chat'" class="flex-1 flex h-full overflow-hidden">
+          
+          <!-- 2.1 客户会话列表 (仅 技术客服 和 超管 可见；普通用户删除对话列表，每次开新对话) -->
+          <div v-if="currentRole !== 'user'" class="w-72 border-r border-slate-200 bg-slate-50 flex flex-col h-full flex-shrink-0">
+            <div class="p-4 border-b border-slate-200 bg-white space-y-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-xs font-bold uppercase tracking-wider text-slate-800">
+                    {{ currentRole === 'admin' ? '全渠道客户会话' : '分配给我的待办会话' }}
+                  </span>
+                  <p class="text-[10px] text-slate-400">
+                    {{ currentRole === 'admin' ? `共 ${filteredSessions.length} 条会话记录` : `当前负责 ${filteredSessions.length} 位进线客户` }}
+                  </p>
+                </div>
+                <!-- 超管可手动新建客户会话 -->
+                <button 
+                  v-if="currentRole === 'admin'"
+                  @click="showNewSessionModal = true" 
+                  class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer"
+                >
+                  + 新会话
+                </button>
+              </div>
+
+              <!-- 超管端历史状态过滤（全部 / 活跃中 / 已结单历史） -->
+              <div v-if="currentRole === 'admin'" class="grid grid-cols-3 gap-1 bg-slate-100 p-0.5 rounded-lg text-[10px]">
+                <button 
+                  @click="sessionFilterStatus = 'ACTIVE'" 
+                  :class="sessionFilterStatus === 'ACTIVE' ? 'bg-white font-bold text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'"
+                  class="py-1 rounded-md transition text-center"
+                >
+                  进行中
+                </button>
+                <button 
+                  @click="sessionFilterStatus = 'CLOSED'" 
+                  :class="sessionFilterStatus === 'CLOSED' ? 'bg-white font-bold text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'"
+                  class="py-1 rounded-md transition text-center"
+                >
+                  已结单历史
+                </button>
+                <button 
+                  @click="sessionFilterStatus = 'ALL'" 
+                  :class="sessionFilterStatus === 'ALL' ? 'bg-white font-bold text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'"
+                  class="py-1 rounded-md transition text-center"
+                >
+                  全部
+                </button>
+              </div>
+            </div>
+
+            <!-- 会话项列表 -->
+            <div class="flex-1 overflow-y-auto p-2 space-y-1.5">
+              <div 
+                v-for="s in filteredSessions" 
+                :key="s.id"
+                @click="switchSession(s)"
+                :class="currentSession && currentSession.id === s.id ? 'bg-indigo-50 border-indigo-300 shadow-xs' : 'bg-white border-slate-200 hover:bg-slate-100/70'"
+                class="p-3 rounded-xl border transition cursor-pointer"
+              >
+                <div class="flex items-center gap-2.5">
+                  <div class="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs flex-shrink-0">
+                    {{ (s.customer_name || '客').slice(0, 1) }}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between">
+                      <p class="text-xs font-bold text-slate-800 truncate">{{ s.customer_name }}</p>
+                      <span class="text-[10px] font-mono text-slate-400">{{ (s.last_message_at || '').slice(11, 16) }}</span>
+                    </div>
+                    <div class="flex items-center justify-between mt-1">
+                      <p class="text-[11px] text-slate-500 truncate mr-2">{{ s.last_message || '新建立会话' }}</p>
+                      <span 
+                        v-if="s.status === 'HUMAN_CONNECTED'" 
+                        class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded font-bold whitespace-nowrap animate-pulse"
+                      >
+                        人工接管
+                      </span>
+                      <span 
+                        v-else-if="s.status === 'CLOSED'" 
+                        class="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.2 rounded font-medium whitespace-nowrap"
+                      >
+                        已结单
+                      </span>
+                      <span 
+                        v-else 
+                        class="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded font-medium whitespace-nowrap"
+                      >
+                        AI服务
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="filteredSessions.length === 0" class="p-8 text-center text-xs text-slate-400">
+                暂无分配的会话记录
+              </div>
+            </div>
+
+            <!-- 技术客服负责产品标识 -->
+            <div v-if="currentRole === 'tech_agent'" class="p-3 border-t border-slate-200 bg-white text-xs text-slate-500">
+              <span class="font-semibold text-slate-700">负责业务线:</span>
+              <span class="ml-1 px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono font-bold">{{ currentUserProduct || 'SAAS_CLOUD' }}</span>
+            </div>
+          </div>
+
+          <!-- 2.2 聊天对话主视窗 -->
+          <div class="flex-1 flex flex-col h-full bg-slate-100/60 overflow-hidden relative">
+            
+            <!-- 顶部状态栏 -->
+            <div class="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-2xs z-10">
+              <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-full flex items-center justify-center text-xs shadow-sm"
+                     :class="currentRole === 'user' ? 'bg-gradient-to-tr from-indigo-500 to-sky-400 text-white font-bold' : 'bg-indigo-600 text-white font-bold'">
+                  {{ currentRole === 'user' ? '🤖' : (currentSession?.customer_name || '客').slice(0, 1) }}
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h2 class="text-sm font-bold text-slate-900">
+                      {{ currentRole === 'user' ? 'AI 智能客服在线助手' : (currentSession?.customer_name || '客户对话') }}
+                    </h2>
+                    <span 
+                      v-if="currentSession?.status === 'HUMAN_CONNECTED'"
+                      class="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-semibold flex items-center gap-1"
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>
+                      人工客服座席接入中 (工号: {{ currentSession?.assigned_agent || '客服专员' }})
+                    </span>
+                    <span 
+                      v-else-if="currentSession?.status === 'CLOSED'"
+                      class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-semibold"
+                    >
+                      已结单历史
+                    </span>
+                    <span 
+                      v-else
+                      class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold flex items-center gap-1"
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                      AI智能应答模式
+                    </span>
+                  </div>
+                  <p class="text-[11px] text-slate-400 font-mono">
+                    {{ currentRole === 'user' ? '在线企业客服 · 专属新会话已开启' : `客户ID: ${currentSession?.customer_id} | 产品: ${currentSession?.product_code}` }}
+                  </p>
+                </div>
+              </div>
+
+              <!-- 右侧快捷操作栏：根据角色权限区分 -->
+              <div class="flex items-center gap-2">
+                <!-- 普通用户咨询产品线选择切换 -->
+                <div v-if="currentRole === 'user'" class="flex items-center gap-1.5 mr-2">
+                  <span class="text-[11px] text-slate-500 font-medium">咨询产品:</span>
+                  <select v-model="currentProductCode" @change="onUserProductChange" class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700">
+                    <option value="SAAS_CLOUD">企业SaaS云平台</option>
+                    <option value="E_COMMERCE">电商零售系统</option>
+                    <option value="FIN_AI">金融智能助手</option>
+                  </select>
+                </div>
+
+                <!-- 普通用户在人工接入模式下：显眼的挂断人工服务按钮 -->
+                <button 
+                  v-if="currentRole === 'user' && currentSession?.status === 'HUMAN_CONNECTED'"
+                  @click="handleUserHangup" 
+                  class="text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold px-3.5 py-1.5 rounded-xl transition shadow-md shadow-rose-500/20 flex items-center gap-1 cursor-pointer"
+                >
+                  <span>🔴</span>
+                  <span>挂断人工服务</span>
+                </button>
+
+                <!-- 普通用户在 AI 模式下可点击【转接人工客服】（常驻支持二次转人工） -->
+                <button 
+                  v-if="currentRole === 'user' && currentSession?.status !== 'HUMAN_CONNECTED'"
+                  @click="handleManualTransferHuman" 
+                  class="text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 cursor-pointer"
+                >
+                  <span>👩‍💼</span>
+                  <span>转接人工客服</span>
+                </button>
+
+                <!-- 技术客服 或 超管 有权点击【结束人工切回AI】 -->
+                <button 
+                  v-if="canManageHumanSession && currentSession?.status === 'HUMAN_CONNECTED'"
+                  @click="finishHumanService" 
+                  class="text-xs bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-lg font-semibold transition cursor-pointer"
+                >
+                  结束人工，切回AI
+                </button>
+
+                <!-- 技术客服 或 超管 可以在 AI 状态下一键主动【接入接管会话】 -->
+                <button 
+                  v-if="canManageHumanSession && currentSession?.status !== 'HUMAN_CONNECTED'"
+                  @click="handleManualTransferHuman" 
+                  class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 cursor-pointer"
+                >
+                  <span>🎧</span>
+                  <span>座席主动接管</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 消息流展示区域 -->
+            <div ref="chatContainer" class="flex-1 overflow-y-auto p-6 space-y-5">
+              
+              <!-- 欢迎提示语 -->
+              <div class="flex gap-3 max-w-2xl">
+                <div class="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-sm">
+                  AI
+                </div>
+                <div class="bg-white border border-slate-200 rounded-2xl rounded-tl-sm p-4 text-xs text-slate-700 shadow-2xs leading-relaxed">
+                  <p class="font-bold text-slate-900 text-sm mb-1">您好！{{ currentUserDisplayName }}</p>
+                  <p>我是您的专属智能客服助手，已接入当前业务产品（{{ currentProductCode }}）知识库与智能检索系统。您可以随时向我咨询功能指南、业务政策，或在需要时转接技术客服：</p>
+                  
+                  <div class="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100">
+                    <button @click="sendQuickPrompt('怎么退款')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] px-2.5 py-1 rounded-full transition cursor-pointer">
+                      👉 怎么退款 (知识库直接回答)
+                    </button>
+                    <button @click="sendQuickPrompt('查我的订单物流到哪了')" class="bg-sky-50 hover:bg-sky-100 text-sky-700 text-[11px] px-2.5 py-1 rounded-full transition font-semibold cursor-pointer">
+                      📦 查订单物流 (业务卡片驱动)
+                    </button>
+                    <button @click="sendQuickPrompt('查我的退款进度')" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] px-2.5 py-1 rounded-full transition font-semibold cursor-pointer">
+                      💰 查退款进度 (售后单查询)
+                    </button>
+                    <button @click="sendQuickPrompt('人工客服在哪里')" class="bg-amber-50 hover:bg-amber-100 text-amber-700 text-[11px] px-2.5 py-1 rounded-full transition cursor-pointer">
+                      👩‍💼 转人工客服专员
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 动态消息流 -->
+              <div 
+                v-for="(m, idx) in messageList" 
+                :key="m.id || idx" 
+                class="flex gap-3"
+                :class="m.role === 'user' ? 'justify-end' : 'justify-start'"
+              >
+                <!-- 头像：系统/助手/人工客服 -->
+                <div 
+                  v-if="m.role !== 'user'" 
+                  class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-sm"
+                  :class="m.role === 'human_agent' ? 'bg-amber-600 text-white' : (m.role === 'system' ? 'bg-slate-600 text-white' : 'bg-indigo-600 text-white')"
+                >
+                  {{ m.role === 'human_agent' ? '👩‍💼' : (m.role === 'system' ? '🔔' : 'AI') }}
+                </div>
+
+                <!-- 消息气泡卡片 -->
+                <div 
+                  class="max-w-2xl rounded-2xl p-4 text-xs shadow-2xs space-y-3"
+                  :class="m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-sm' : (m.role === 'system' ? 'bg-slate-100 text-slate-700 border border-slate-200 rounded-tl-sm w-full text-center py-2.5' : (m.role === 'human_agent' ? 'bg-amber-50/70 border border-amber-200 text-slate-800 rounded-tl-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-tl-sm'))"
+                >
+                  <!-- 头部标记 -->
+                  <div v-if="m.role !== 'user' && m.role !== 'system'" class="flex items-center justify-between text-[11px] pb-1 border-b border-slate-100">
+                    <span class="font-bold flex items-center gap-1" :class="m.role === 'human_agent' ? 'text-amber-800' : 'text-indigo-700'">
+                      <span>{{ m.role === 'human_agent' ? '👨‍💻 人工客服专员' : '🤖 智能助手应答' }}</span>
+                      <span v-if="m.confidence_score" class="font-mono text-[10px] bg-slate-100 px-1.5 py-0.2 rounded-full text-slate-600">
+                        置信度: {{ (m.confidence_score * 100).toFixed(0) }}%
+                      </span>
+                    </span>
+                    <span class="text-slate-400 font-mono text-[10px]">{{ (m.created_at || '').slice(11, 16) }}</span>
+                  </div>
+
+                  <!-- 消息主体正文 -->
+                  <div class="leading-relaxed whitespace-pre-wrap select-text">
+                    {{ m.content }}
+                  </div>
+
+                  <!-- 业务卡片展示 -->
+                  <div v-if="m.business_data" class="pt-2 border-t border-slate-100">
+                    <div v-if="m.business_data.card_type === 'ORDER_CARD'" class="bg-indigo-50/60 p-3 rounded-xl border border-indigo-200 text-slate-800 space-y-2">
+                      <div class="flex items-center justify-between font-bold text-xs">
+                        <span class="text-indigo-900">📦 订单详情 (#{{ m.business_data.order_id }})</span>
+                        <span class="text-indigo-600 font-mono">{{ m.business_data.status }}</span>
+                      </div>
+                      <div class="text-[11px] space-y-1 text-slate-600">
+                        <p><strong>商品:</strong> {{ m.business_data.item_name }} ({{ m.business_data.amount }})</p>
+                        <p><strong>快递公司:</strong> {{ m.business_data.carrier }} · 单号: {{ m.business_data.tracking_no }}</p>
+                        <p><strong>最新轨迹:</strong> {{ m.business_data.latest_track }}</p>
+                      </div>
+                    </div>
+
+                    <div v-else-if="m.business_data.card_type === 'REFUND_CARD'" class="bg-emerald-50/60 p-3 rounded-xl border border-emerald-200 text-slate-800 space-y-2">
+                      <div class="flex items-center justify-between font-bold text-xs">
+                        <span class="text-emerald-900">💰 售后退款单 (#{{ m.business_data.refund_id }})</span>
+                        <span class="text-emerald-600 font-bold">{{ m.business_data.status }}</span>
+                      </div>
+                      <div class="text-[11px] space-y-1 text-slate-600">
+                        <p><strong>退款金额:</strong> {{ m.business_data.amount }} (原路退回)</p>
+                        <p><strong>申请原因:</strong> {{ m.business_data.reason }}</p>
+                        <p><strong>审核意见:</strong> {{ m.business_data.review_comment }}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 相似推荐卡片 -->
+                  <div v-if="m.suggested_questions && m.suggested_questions.length > 0" class="space-y-1.5 pt-2 border-t border-slate-100">
+                    <div class="flex flex-wrap gap-2">
+                      <button 
+                        v-for="sq in m.suggested_questions" 
+                        :key="sq.question_id"
+                        @click="sendQuickPrompt(sq.title)"
+                        class="text-left text-xs bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 border border-slate-200 hover:border-indigo-300 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span class="text-indigo-500 font-bold">❓</span>
+                        <span>{{ sq.title }}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 知识来源引用 (点击唤出切片抽屉) -->
+                  <div v-if="m.sources && m.sources.length > 0" class="pt-2 border-t border-slate-100">
+                    <div class="flex items-center justify-between text-[11px]">
+                      <span class="font-bold text-indigo-700">📚 知识库溯源支撑 ({{ m.sources.length }} 条)</span>
+                      <span class="text-[10px] text-slate-400">点击查阅知识切片</span>
+                    </div>
+                    <div class="grid grid-cols-1 gap-1.5 mt-2">
+                      <div 
+                        v-for="(src, sidx) in m.sources" 
+                        :key="sidx"
+                        @click="openSourceDrawer(src)"
+                        class="bg-slate-50 hover:bg-indigo-50/70 p-2 rounded-lg border border-slate-200 hover:border-indigo-200 cursor-pointer transition flex items-center justify-between text-slate-700"
+                      >
+                        <div class="flex items-center gap-2 truncate">
+                          <span class="w-4 h-4 rounded-full bg-indigo-200 text-indigo-800 text-[10px] font-bold flex items-center justify-center flex-shrink-0">{{ sidx + 1 }}</span>
+                          <span class="font-semibold text-xs text-slate-900 truncate">{{ src.doc_name }}</span>
+                          <span class="text-[10px] text-slate-500">({{ src.heading || '正文切片' }})</span>
+                        </div>
+                        <span class="text-indigo-600 text-xs font-semibold ml-2">查阅 ➔</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 底部常驻转人工按钮 (普通用户在 AI 模式下可见，挂断后立刻可再次使用) -->
+                  <div v-if="currentRole === 'user' && m.role === 'assistant' && currentSession?.status !== 'HUMAN_CONNECTED'" class="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    <span class="text-slate-400">解答不够满意？可随时请求人工协助</span>
+                    <button 
+                      @click="handleManualTransferHuman" 
+                      class="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-lg font-semibold transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>👩‍💼</span>
+                      <span>转接专属技术客服</span>
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+
+              <!-- 加载状态 -->
+              <div v-if="isThinking" class="flex gap-3 items-center text-xs text-slate-500">
+                <div class="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold animate-pulse">
+                  AI
+                </div>
+                <div class="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-indigo-600 animate-ping"></span>
+                  <span>正在执行 Query 改写、BM25与向量双路召回及重排决策...</span>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- 底部发送框 -->
+            <div class="p-4 bg-white border-t border-slate-200">
+              <div class="flex gap-2">
+                <input 
+                  v-model="inputQuery" 
+                  @keyup.enter="handleSend"
+                  type="text" 
+                  :placeholder="currentRole === 'user' ? '请输入您的问题（如：怎么退款、查我的订单物流、重置密码...）' : '以人工客服身份输入解答或指导意见...'" 
+                  class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition"
+                />
+                <button 
+                  @click="handleSend" 
+                  :disabled="!inputQuery.trim() || isThinking"
+                  class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-6 py-2.5 rounded-xl transition shadow-md shadow-indigo-500/25 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+                >
+                  <span>发送</span>
+                  <span>➔</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ================= 模块 2: 知识片段与文档治理 ================= -->
+        <section v-if="activeMenu === 'chunks' && hasMenuPermission('chunks')" class="flex-1 overflow-y-auto p-8 space-y-6">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-xl font-bold text-slate-900">知识文档与片段治理</h2>
+              <p class="text-xs text-slate-500 mt-1">
+                {{ currentRole === 'admin' ? '超管知识审核流 · 多版本快照回滚 · 细粒度分块切片治理' : `负责产品【${currentUserProduct || 'SAAS_CLOUD'}】知识文档提交与切片查阅` }}
+              </p>
+            </div>
+            
+            <div class="flex gap-2">
+              <button @click="showFaqImportModal = true" class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-4 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer">
+                <span>💬</span>
+                <span>批量录入 FAQ</span>
+              </button>
+              <button @click="openUploadModal" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer">
+                <span>➕</span>
+                <span>上传/录入文档</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 筛选与视图切换栏 -->
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div class="flex items-center gap-2">
+              <button 
+                @click="chunkViewTab = 'docs'"
+                :class="chunkViewTab === 'docs' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                class="px-3.5 py-1.5 rounded-lg font-semibold transition cursor-pointer"
+              >
+                📄 知识文档视图 (审核流/版本)
+              </button>
+              <button 
+                @click="chunkViewTab = 'chunks'"
+                :class="chunkViewTab === 'chunks' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                class="px-3.5 py-1.5 rounded-lg font-semibold transition cursor-pointer"
+              >
+                🧩 检索切片视图 (Chunks)
+              </button>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <select v-model="filterKbId" @change="onFilterKbChange" class="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium">
+                <option value="">全部所属知识库</option>
+                <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }} ({{ k.product_code }})</option>
+              </select>
+              
+              <select v-if="chunkViewTab === 'docs'" v-model="filterDocStatus" @change="refreshDocs" class="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium">
+                <option value="">全部审核状态</option>
+                <option value="ACTIVE">✅ 已生效</option>
+                <option value="PENDING_REVIEW">⏳ 待超管审核</option>
+                <option value="REJECTED">❌ 已驳回</option>
+              </select>
+
+              <select v-if="chunkViewTab === 'docs'" v-model="filterDocType" @change="refreshDocs" class="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                <option value="">全部类型</option>
+                <option value="MD">Markdown</option>
+                <option value="TXT">TXT纯文本</option>
+                <option value="FAQ">FAQ问答库</option>
+              </select>
+
+              <select v-if="chunkViewTab === 'chunks'" v-model="filterDocId" @change="onFilterDocChange" class="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium">
+                <option value="">全部文档切片</option>
+                <option v-for="d in documents" :key="d.id" :value="d.id">{{ d.name }}</option>
+              </select>
+
+              <input 
+                v-model="searchKeyword" 
+                @input="handleSearch"
+                type="text" 
+                placeholder="搜索名称或切片正文..." 
+                class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <!-- 视图 A: 文档列表视图 (支持超管审核流、版本回滚、编辑) -->
+          <div v-if="chunkViewTab === 'docs'" class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+            <table class="w-full text-left text-xs text-slate-700">
+              <thead class="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
+                <tr>
+                  <th class="py-3 px-4">文档名称</th>
+                  <th class="py-3 px-4">归属知识库</th>
+                  <th class="py-3 px-4">审核状态</th>
+                  <th class="py-3 px-4">格式</th>
+                  <th class="py-3 px-4">优先级</th>
+                  <th class="py-3 px-4">版本号</th>
+                  <th class="py-3 px-4">提交人</th>
+                  <th class="py-3 px-4">更新时间</th>
+                  <th class="py-3 px-4 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr v-for="doc in documents" :key="doc.id" class="hover:bg-slate-50 transition">
+                  <td class="py-3 px-4 font-semibold text-slate-900 flex items-center gap-2">
+                    <span v-if="doc.doc_type === 'MD'">📝</span>
+                    <span v-else-if="doc.doc_type === 'FAQ'">💬</span>
+                    <span v-else>📄</span>
+                    <span class="truncate max-w-xs" :title="doc.name">{{ doc.name }}</span>
+                  </td>
+                  <td class="py-3 px-4 font-medium text-slate-600">
+                    {{ getKbName(doc.kb_id) }}
+                  </td>
+                  <!-- 审核状态列 -->
+                  <td class="py-3 px-4">
+                    <span v-if="doc.status === 'ACTIVE'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      ✅ 已生效
+                    </span>
+                    <span v-else-if="doc.status === 'PENDING_REVIEW'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200 animate-pulse">
+                      ⏳ 待超管审核
+                    </span>
+                    <span v-else-if="doc.status === 'REJECTED'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                      ❌ 已驳回
+                    </span>
+                    <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                      {{ doc.status }}
+                    </span>
+                  </td>
+                  <td class="py-3 px-4 font-mono">
+                    <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">{{ doc.doc_type }}</span>
+                  </td>
+                  <td class="py-3 px-4">
+                    <span class="text-amber-500 font-bold">★ {{ doc.priority }}</span>
+                  </td>
+                  <td class="py-3 px-4 font-mono font-bold text-indigo-600">v{{ doc.version }}</td>
+                  <td class="py-3 px-4 text-slate-600">{{ doc.created_by || 'admin' }}</td>
+                  <td class="py-3 px-4 text-slate-400 font-mono">{{ (doc.updated_at || '').slice(0, 16).replace('T', ' ') }}</td>
+                  <td class="py-3 px-4 text-right space-x-1 whitespace-nowrap">
+                    <!-- 超级管理员审核操作 -->
+                    <template v-if="currentRole === 'admin' && doc.status === 'PENDING_REVIEW'">
+                      <button @click="approveDoc(doc)" class="text-emerald-700 hover:text-emerald-900 font-bold px-2 py-1 bg-emerald-100 hover:bg-emerald-200 rounded-md transition shadow-xs cursor-pointer">
+                        ✅ 批准生效
+                      </button>
+                      <button @click="rejectDoc(doc)" class="text-rose-700 hover:text-rose-900 font-bold px-2 py-1 bg-rose-100 hover:bg-rose-200 rounded-md transition shadow-xs cursor-pointer">
+                        ❌ 驳回
+                      </button>
+                    </template>
+
+                    <!-- 预览按钮 -->
+                    <button @click="openPreviewDoc(doc)" class="text-indigo-600 hover:text-indigo-800 font-semibold px-2 py-1 bg-indigo-50 hover:bg-indigo-100 rounded-md transition cursor-pointer">
+                      👁️ 预览
+                    </button>
+                    <!-- 编辑按钮 (客服与超管) -->
+                    <button @click="openEditDocModal(doc)" class="text-emerald-700 hover:text-emerald-900 font-semibold px-2 py-1 bg-emerald-50 hover:bg-emerald-100 rounded-md transition cursor-pointer">
+                      ✏️ 编辑
+                    </button>
+                    <!-- 切片直达 -->
+                    <button @click="viewDocChunks(doc)" class="text-sky-700 hover:text-sky-900 font-semibold px-2 py-1 bg-sky-50 hover:bg-sky-100 rounded-md transition cursor-pointer">
+                      🧩 切片
+                    </button>
+                    <!-- 版本历史与回滚 -->
+                    <button @click="openVersionModal(doc)" class="text-amber-700 hover:text-amber-900 font-semibold px-2 py-1 bg-amber-50 hover:bg-amber-100 rounded-md transition cursor-pointer">
+                      🕰️ 历史
+                    </button>
+                    <!-- 删除文档 (仅超管) -->
+                    <button v-if="currentRole === 'admin'" @click="deleteDoc(doc)" class="text-rose-600 hover:text-rose-800 font-semibold px-2 py-1 bg-rose-50 hover:bg-rose-100 rounded-md transition cursor-pointer">
+                      🗑️
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-if="documents.length === 0" class="p-8 text-center text-xs text-slate-400">
+              当前知识库下暂无文档
+            </div>
+          </div>
+
+          <!-- 视图 B: 检索切片视图 (Chunks) -->
+          <div v-if="chunkViewTab === 'chunks'" class="space-y-3">
+            <div v-for="c in chunkList" :key="c.id" class="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs hover:shadow-sm transition space-y-2">
+              <div class="flex items-center justify-between text-xs">
+                <div class="flex items-center gap-2">
+                  <span class="w-6 h-6 rounded-lg bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-[10px]">#{{ c.chunk_index }}</span>
+                  <span class="font-bold text-slate-900">{{ c.doc_name }}</span>
+                  <span class="text-[11px] text-slate-500 font-mono">({{ c.heading_path || '文档正文' }})</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-amber-500 font-semibold text-[11px]">★ 优先级: {{ c.priority }}</span>
+                  <span class="text-[10px] font-mono text-slate-400">ID: {{ c.id.slice(0, 8) }}</span>
+                </div>
+              </div>
+              <p class="text-xs text-slate-700 leading-relaxed font-mono whitespace-pre-wrap bg-slate-50 p-3 rounded-xl border border-slate-100">
+                {{ c.content }}
+              </p>
+            </div>
+            <div v-if="chunkList.length === 0" class="bg-white border border-slate-200 rounded-2xl p-8 text-center text-xs text-slate-400">
+              暂无匹配的切片数据
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= 模块 3: 知识库管理 (仅 超级管理员 可见) ================= -->
+        <section v-if="activeMenu === 'kb' && hasMenuPermission('kb')" class="flex-1 overflow-y-auto p-8 space-y-6">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-xl font-bold text-slate-900">知识库治理中心</h2>
+              <p class="text-xs text-slate-500 mt-1">创建多产品知识库、调优 BM25/向量召回与重排阈值参数</p>
+            </div>
+            <button @click="showCreateKBDocModal = true" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer">
+              <span>➕</span>
+              <span>创建产品知识库</span>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div v-for="kb in kbs" :key="kb.id" class="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs hover:shadow-md transition space-y-4">
+              <div class="flex items-start justify-between">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h3 class="font-bold text-slate-900 text-sm">{{ kb.name }}</h3>
+                    <!-- Switch 切换启用/停用 -->
+                    <button 
+                      @click="toggleKBStatus(kb)"
+                      :class="kb.status === 'ACTIVE' ? 'bg-indigo-600' : 'bg-slate-300'"
+                      class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out"
+                    >
+                      <span :class="kb.status === 'ACTIVE' ? 'translate-x-4 bg-white' : 'translate-x-0 bg-white'" class="pointer-events-none inline-block h-4 w-4 transform rounded-full shadow-sm ring-0 transition duration-200 ease-in-out"></span>
+                    </button>
+                  </div>
+                  <span class="text-[10px] font-mono text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-md inline-block mt-1">
+                    产品编码: {{ kb.product_code }}
+                  </span>
+                </div>
+                <button @click="openEditKBModal(kb)" class="text-slate-400 hover:text-indigo-600 text-xs font-medium cursor-pointer">
+                  ✏️ 编辑
+                </button>
+              </div>
+
+              <p class="text-xs text-slate-500 line-clamp-2">{{ kb.description || '暂无描述信息' }}</p>
+
+              <div class="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px]">
+                <div>
+                  <span class="text-slate-400">生效文档:</span>
+                  <span class="font-bold text-slate-700 ml-1">{{ kb.doc_count || 0 }} 篇</span>
+                </div>
+                <div>
+                  <span class="text-slate-400">向量切片:</span>
+                  <span class="font-bold text-slate-700 ml-1">{{ kb.chunk_count || 0 }} 个</span>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                <button @click="openConfigModal(kb)" class="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer">
+                  ⚙️ 检索与重排阈值配置
+                </button>
+                <button @click="confirmDeleteKB(kb)" class="text-rose-600 hover:text-rose-800 font-semibold cursor-pointer">
+                  🗑️ 级联删除
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- ================= 模态弹窗与抽屉 ================= -->
+
+    <!-- 弹窗 A: 接新客户会话 -->
+    <div v-if="showNewSessionModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl space-y-4">
+        <h3 class="text-base font-bold text-slate-800">建立新客户咨询</h3>
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">客户姓名</label>
+            <input v-model="newSessionForm.customer_name" type="text" placeholder="例如：李女士" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">客户唯一ID</label>
+            <input v-model="newSessionForm.customer_id" type="text" placeholder="例如：user_1002" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-mono" />
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button @click="showNewSessionModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 cursor-pointer">取消</button>
+          <button @click="submitCreateSession" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold cursor-pointer">建立</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 B: 新建知识库 -->
+    <div v-if="showCreateKBDocModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+        <h3 class="text-base font-bold text-slate-800">新建产品专属知识库</h3>
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">归属产品线编码</label>
+            <select v-model="newKB.product_code" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-mono">
+              <option value="SAAS_CLOUD">SAAS_CLOUD (企业SaaS云平台)</option>
+              <option value="E_COMMERCE">E_COMMERCE (电商零售业务)</option>
+              <option value="FIN_AI">FIN_AI (金融智能风控)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">知识库名称</label>
+            <input v-model="newKB.name" type="text" placeholder="例如：SaaS产品功能与售后政策库" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">详细描述</label>
+            <textarea v-model="newKB.description" rows="3" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5"></textarea>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button @click="showCreateKBDocModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 cursor-pointer">取消</button>
+          <button @click="submitCreateKB" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold cursor-pointer">保存创建</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 C: 检索阈值配置 -->
+    <div v-if="showConfigModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+        <h3 class="text-base font-bold text-slate-800">检索与重排参数调优【{{ editingKB.name }}】</h3>
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">高置信直接回复阈值 (Direct Threshold): {{ kbConfigForm.threshold_direct }}</label>
+            <input v-model.number="kbConfigForm.threshold_direct" type="range" min="0.6" max="0.95" step="0.01" class="w-full" />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">中置信推荐澄清阈值 (Clarify Threshold): {{ kbConfigForm.threshold_clarify }}</label>
+            <input v-model.number="kbConfigForm.threshold_clarify" type="range" min="0.3" max="0.8" step="0.01" class="w-full" />
+          </div>
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">BM25 TopK</label>
+              <input v-model.number="kbConfigForm.bm25_top_k" type="number" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">向量 TopK</label>
+              <input v-model.number="kbConfigForm.vector_top_k" type="number" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">重排 TopK</label>
+              <input v-model.number="kbConfigForm.rerank_top_k" type="number" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2" />
+            </div>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button @click="showConfigModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 cursor-pointer">取消</button>
+          <button @click="saveKBConfig" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold cursor-pointer">保存生效</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 D: 上传/新增知识文档 (重构版：清爽双Tab切换 + 切片Loading延迟遮罩) -->
+    <div v-if="showUploadDocModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 relative overflow-hidden">
+        
+        <!-- Loading 遮罩层 (处理切片耗时延迟) -->
+        <div v-if="isSubmittingDoc" class="absolute inset-0 bg-white/95 backdrop-blur-xs flex flex-col items-center justify-center gap-3 z-10">
+          <div class="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+          <p class="text-xs font-bold text-slate-800">正在解析文本并构建向量切片...</p>
+          <p class="text-[11px] text-slate-500">（正在生成 Embedding 并入库，耗时约 2~4 秒，请稍候）</p>
+        </div>
+
+        <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+          <div>
+            <h3 class="text-base font-bold text-slate-800">添加知识文档</h3>
+            <p class="text-[11px] text-slate-400 mt-0.5">支持本地文件上传或在线录入文本内容</p>
+          </div>
+          <button @click="showUploadDocModal = false" class="text-slate-400 hover:text-slate-600 text-lg font-bold cursor-pointer">✕</button>
+        </div>
+
+        <!-- 模式切换 Tab -->
+        <div class="grid grid-cols-2 p-1 bg-slate-100 rounded-xl text-xs font-medium">
+          <button 
+            type="button"
+            @click="uploadDocTab = 'file'"
+            :class="uploadDocTab === 'file' ? 'bg-white text-indigo-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-700'"
+            class="py-2 rounded-lg transition text-center cursor-pointer"
+          >
+            📁 本地文件上传
+          </button>
+          <button 
+            type="button"
+            @click="uploadDocTab = 'text'"
+            :class="uploadDocTab === 'text' ? 'bg-white text-indigo-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-700'"
+            class="py-2 rounded-lg transition text-center cursor-pointer"
+          >
+            ✍️ 在线手动录入
+          </button>
+        </div>
+
+        <div class="space-y-3.5 text-xs">
+          <!-- 知识库选择与优先级配置 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">归属知识库</label>
+              <select v-model="newDoc.kb_id" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-medium">
+                <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }} ({{ k.product_code }})</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">知识优先级 (1-5)</label>
+              <select v-model.number="newDoc.priority" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-medium">
+                <option :value="5">★ 5 极高 (优先召回)</option>
+                <option :value="4">★ 4 高优先级</option>
+                <option :value="3">★ 3 中等优先级</option>
+                <option :value="2">★ 2 次要优先级</option>
+                <option :value="1">★ 1 普通知识</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Tab 1: 本地文件上传 -->
+          <div v-if="uploadDocTab === 'file'" class="space-y-3">
+            <div class="border-2 border-dashed border-slate-200 hover:border-indigo-400 bg-slate-50/60 hover:bg-indigo-50/20 rounded-2xl p-6 text-center transition cursor-pointer" @click="$refs.fileInput.click()">
+              <input type="file" ref="fileInput" @change="onFileSelected" accept=".md,.txt" class="hidden" />
+              <div class="text-3xl mb-2">📄</div>
+              <p class="font-bold text-slate-700">{{ selectedFileName || '点击选择本地 .md 或 .txt 文件' }}</p>
+              <p class="text-[11px] text-slate-400 mt-1">系统将自动按照标题层级或段落语义智能分块</p>
+            </div>
+          </div>
+
+          <!-- Tab 2: 在线录入 -->
+          <div v-if="uploadDocTab === 'text'" class="space-y-3">
+            <div class="grid grid-cols-3 gap-2">
+              <div class="col-span-2">
+                <label class="block font-semibold text-slate-700 mb-1">文档标题</label>
+                <input v-model="newDoc.name" type="text" placeholder="例如：SaaS产品售后政策.md" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+              </div>
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1">格式</label>
+                <select v-model="newDoc.doc_type" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-medium">
+                  <option value="MD">Markdown</option>
+                  <option value="TXT">TXT纯文本</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">文档正文内容</label>
+              <textarea v-model="newDoc.content" rows="6" placeholder="请在此输入或粘贴知识文档正文..." class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-mono leading-relaxed"></textarea>
+            </div>
+          </div>
+
+          <!-- 审核提示 -->
+          <div v-if="currentRole === 'tech_agent'" class="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-center gap-2">
+            <span>ℹ️</span>
+            <span>当前为技术客服身份：提交后文档将进入【待审核】状态，超管审核通过后方生效并切片入库。</span>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button @click="showUploadDocModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 font-medium cursor-pointer">取消</button>
+          <button @click="submitCreateDoc" :disabled="isSubmittingDoc" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-500/20 transition disabled:opacity-50 cursor-pointer">
+            {{ isSubmittingDoc ? '正在切片处理中...' : '提交并处理' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 E: 批量导入 FAQ -->
+    <div v-if="showFaqImportModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl space-y-4 max-h-[90vh] flex flex-col">
+        <h3 class="text-base font-bold text-slate-800">批量录入结构化 FAQ (标准问+相似问+答案)</h3>
+        <div class="space-y-3 text-xs flex-1 overflow-y-auto pr-1">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">归属知识库</label>
+            <select v-model="faqForm.kb_id" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+              <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }} ({{ k.product_code }})</option>
+            </select>
+          </div>
+          <div class="space-y-2 border-t border-slate-100 pt-2">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-slate-700">FAQ 条目列表</span>
+              <button @click="addFaqRow" class="text-indigo-600 font-bold hover:underline cursor-pointer">+ 添加一条问答</button>
+            </div>
+            <div v-for="(item, idx) in faqForm.items" :key="idx" class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2 relative">
+              <div class="grid grid-cols-3 gap-2">
+                <div class="col-span-2">
+                  <label class="block font-medium text-slate-600 mb-1">标准问题</label>
+                  <input v-model="item.standard_question" type="text" placeholder="例如：怎么重置密码" class="w-full bg-white border border-slate-200 rounded-lg p-2" />
+                </div>
+                <div>
+                  <label class="block font-medium text-slate-600 mb-1">优先级 (1-5)</label>
+                  <input v-model.number="item.priority" type="number" min="1" max="5" class="w-full bg-white border border-slate-200 rounded-lg p-2" />
+                </div>
+              </div>
+              <div>
+                <label class="block font-medium text-slate-600 mb-1">相似问法 (支持分号或换行隔开)</label>
+                <input v-model="item.similar_questions_text" type="text" placeholder="忘记密码怎么办；如何找回密码" class="w-full bg-white border border-slate-200 rounded-lg p-2" />
+              </div>
+              <div>
+                <label class="block font-medium text-slate-600 mb-1">标准解答</label>
+                <textarea v-model="item.answer" rows="2" class="w-full bg-white border border-slate-200 rounded-lg p-2"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button @click="showFaqImportModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 cursor-pointer">取消</button>
+          <button @click="submitBatchFAQ" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold cursor-pointer">导入并切片</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 F: 版本历史与回滚 -->
+    <div v-if="showVersionModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-xl space-y-4 max-h-[85vh] flex flex-col">
+        <div>
+          <h3 class="text-base font-bold text-slate-800">文档历史版本与快照回滚</h3>
+          <p class="text-xs text-slate-500 font-mono mt-0.5">文档: {{ selectedDoc.name }} (当前版本: v{{ selectedDoc.version }})</p>
+        </div>
+        <div class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs">
+          <div v-for="v in docVersions" :key="v.id" class="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-indigo-700">版本: v{{ v.version }}</span>
+              <span class="text-slate-400 font-mono text-[10px]">{{ (v.created_at || '').slice(0, 16).replace('T', ' ') }}</span>
+            </div>
+            <p class="text-slate-600 font-mono text-[11px] line-clamp-2 bg-white p-2 rounded border border-slate-100">
+              {{ v.content }}
+            </p>
+            <div class="flex justify-between items-center text-[10px] text-slate-400">
+              <span>编辑提交人: {{ v.created_by || 'admin' }}</span>
+              <button 
+                v-if="v.version !== selectedDoc.version" 
+                @click="rollbackVersion(v.version)" 
+                class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition cursor-pointer"
+              >
+                回滚至此版本 ➔
+              </button>
+              <span v-else class="text-emerald-600 font-bold">当前最新版本</span>
+            </div>
+          </div>
+        </div>
+        <div class="flex justify-end pt-2 border-t border-slate-100">
+          <button @click="showVersionModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 cursor-pointer">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 G: 文档正文完整预览 -->
+    <div v-if="showPreviewDocModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl space-y-4 max-h-[85vh] flex flex-col">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+          <div>
+            <h3 class="text-base font-bold text-slate-800">{{ previewDocData.name }}</h3>
+            <span class="text-[10px] font-mono text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-md mt-1 inline-block">
+              版本: v{{ previewDocData.version }} · 优先级: ★{{ previewDocData.priority }} · 状态: {{ previewDocData.status }}
+            </span>
+          </div>
+          <button @click="showPreviewDocModal = false" class="text-slate-400 hover:text-slate-600 font-bold cursor-pointer">✕</button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs text-slate-800 whitespace-pre-wrap leading-relaxed select-text">
+          {{ previewDocData.content || '暂无文档正文' }}
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 H: 编辑文档内容 -->
+    <div v-if="showEditDocModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-xl space-y-4">
+        <h3 class="text-base font-bold text-slate-800">编辑知识文档 (版本递增与重新索引)</h3>
+        <div class="space-y-3 text-xs">
+          <div class="grid grid-cols-3 gap-2">
+            <div class="col-span-2">
+              <label class="block font-semibold text-slate-700 mb-1">文档名称</label>
+              <input v-model="editDocForm.name" type="text" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">优先级 (1-5)</label>
+              <input v-model.number="editDocForm.priority" type="number" min="1" max="5" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+            </div>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">文档正文内容</label>
+            <textarea v-model="editDocForm.content" rows="8" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-mono"></textarea>
+          </div>
+          <div v-if="currentRole === 'tech_agent'" class="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800">
+            ℹ️ 客服编辑后将进入【待审核】状态，超管审核后才会重新切片生效。
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button @click="showEditDocModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 cursor-pointer">取消</button>
+          <button @click="submitSaveDocEdit" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold cursor-pointer">保存修改</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 I: 编辑知识库名称和描述 -->
+    <div v-if="showEditKBModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+        <h3 class="text-base font-bold text-slate-800">编辑知识库属性</h3>
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">知识库名称</label>
+            <input v-model="editKBForm.name" type="text" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">运行状态</label>
+            <select v-model="editKBForm.status" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-medium">
+              <option value="ACTIVE">ACTIVE - 启用</option>
+              <option value="INACTIVE">INACTIVE - 停用</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">描述信息</label>
+            <textarea v-model="editKBForm.description" rows="3" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5"></textarea>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button @click="showEditKBModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 cursor-pointer">取消</button>
+          <button @click="saveKBBasicInfo" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold cursor-pointer">保存修改</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 溯源切片详情抽屉 -->
+    <div v-if="inspectingSource" class="fixed inset-y-0 right-0 max-w-md w-full bg-white shadow-2xl z-50 border-l border-slate-200 flex flex-col">
+      <div class="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+        <div>
+          <h3 class="text-xs font-bold text-slate-900">溯源依据切片原文</h3>
+          <p class="text-[10px] text-slate-400 font-mono mt-0.5">文档: {{ inspectingSource.doc_name }}</p>
+        </div>
+        <button @click="inspectingSource = null" class="text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer">✕</button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-4 space-y-3 text-xs leading-relaxed select-text">
+        <div class="bg-indigo-50/60 p-3 rounded-xl border border-indigo-100 space-y-1 text-slate-700">
+          <p><strong>章节路径:</strong> {{ inspectingSource.heading || '文档正文' }}</p>
+          <p><strong>切片编号:</strong> #{{ inspectingSource.chunk_id }}</p>
+        </div>
+        <div>
+          <h4 class="font-bold text-slate-800 mb-1">切片原始内容</h4>
+          <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 font-mono whitespace-pre-wrap text-slate-700">
+            {{ inspectingSource.snippet }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div> <!-- 关闭 #app -->
+
+  <script>
+    const { createApp, ref, reactive, computed, onMounted, nextTick } = Vue;
+
+    createApp({
+      setup() {
+        // ================= 1. 同步读取登录态（彻底解决刷新切换角色 Bug） =================
+        const savedUser = (() => {
+          try {
+            const raw = localStorage.getItem('smart_cs_user');
+            return raw ? JSON.parse(raw) : null;
+          } catch (e) {
+            return null;
+          }
+        })();
+
+        const isLoggedIn = ref(!!savedUser);
+        const currentRole = ref(savedUser ? (savedUser.role || 'user') : 'user');
+        const currentUserId = ref(savedUser ? (savedUser.user_id || 'user_001') : 'user_001');
+        const currentUsername = ref(savedUser ? (savedUser.username || 'user') : 'user');
+        const currentUserDisplayName = ref(savedUser ? (savedUser.display_name || '普通客户') : '普通客户');
+        const currentUserProduct = ref(savedUser ? (savedUser.product_code || '') : '');
+
+        const loginForm = reactive({ username: '', password: '' });
+        const loginError = ref('');
+        const loginLoading = ref(false);
+
+        const roleLabels = {
+          user: '普通客户',
+          tech_agent: '技术客服',
+          admin: '超级管理员'
+        };
+        const roleLabel = computed(() => roleLabels[currentRole.value] || '客户');
+
+        const hasMenuPermission = (menuKey) => {
+          if (menuKey === 'chat') return true;
+          if (menuKey === 'chunks') return currentRole.value === 'admin' || currentRole.value === 'tech_agent';
+          if (menuKey === 'kb') return currentRole.value === 'admin';
+          return false;
+        };
+
+        const canManageHumanSession = computed(() => {
+          return currentRole.value === 'admin' || currentRole.value === 'tech_agent';
+        });
+
+        // 统一附带权限与隔离上下文请求头
+        const authFetch = (url, options = {}) => {
+          const headers = options.headers || {};
+          headers['X-User-Role'] = currentRole.value;
+          headers['X-User-Id'] = currentUserId.value;
+          if (currentUserProduct.value) {
+            headers['X-User-Product'] = currentUserProduct.value;
+          }
+          return fetch(url, { ...options, headers });
+        };
+
+        // ================= 2. 核心状态与数据模型 =================
+        const activeMenu = ref('chat');
+        const currentProductCode = ref(currentUserProduct.value || 'SAAS_CLOUD');
+
+        // 会话与消息流
+        const sessions = ref([]);
+        const currentSession = ref(null);
+        const messageList = ref([]);
+        const sessionFilterStatus = ref('ACTIVE'); // 'ACTIVE', 'CLOSED', 'ALL'
+        const newAssignmentAlert = ref(null);
+        const knownAssignedIds = new Set();
+
+        const filteredSessions = computed(() => {
+          if (currentRole.value === 'user') {
+            return sessions.value.filter(s => s.customer_id === currentUserId.value);
+          }
+          if (currentRole.value === 'tech_agent') {
+            // 技术客服：只展示分配给自己的活跃会话
+            return sessions.value.filter(s => s.assigned_agent === currentUserId.value && s.status !== 'CLOSED');
+          }
+          // 超级管理员：可按状态筛选
+          if (sessionFilterStatus.value === 'ACTIVE') {
+            return sessions.value.filter(s => s.status !== 'CLOSED');
+          } else if (sessionFilterStatus.value === 'CLOSED') {
+            return sessions.value.filter(s => s.status === 'CLOSED');
+          }
+          return sessions.value;
+        });
+
+        const inputQuery = ref('');
+        const isThinking = ref(false);
+        const chatContainer = ref(null);
+        const inspectingSource = ref(null);
+
+        // 知识库与文档
+        const kbs = ref([]);
+        const chunkViewTab = ref('docs');
+        const documents = ref([]);
+        const chunkList = ref([]);
+        const filterKbId = ref('');
+        const filterDocType = ref('');
+        const filterDocStatus = ref('');
+        const filterDocId = ref('');
+        const searchKeyword = ref('');
+
+        // 图三重构状态：双Tab切换与切片耗时遮罩
+        const showUploadDocModal = ref(false);
+        const uploadDocTab = ref('file'); // 'file' 或 'text'
+        const isSubmittingDoc = ref(false);
+        const selectedFileName = ref('');
+        const fileInput = ref(null);
+        const newDoc = reactive({ kb_id: '', name: '', doc_type: 'MD', priority: 3, content: '' });
+
+        // 其他弹窗
+        const showNewSessionModal = ref(false);
+        const newSessionForm = reactive({ customer_name: '', customer_id: '' });
+
+        const showCreateKBDocModal = ref(false);
+        const newKB = reactive({ product_code: 'SAAS_CLOUD', name: '', description: '' });
+
+        const showConfigModal = ref(false);
+        const editingKB = ref({});
+        const kbConfigForm = reactive({ threshold_direct: 0.80, threshold_clarify: 0.50, bm25_top_k: 15, vector_top_k: 15, rerank_top_k: 3 });
+
+        const showEditKBModal = ref(false);
+        const editKBForm = reactive({ name: '', description: '', status: 'ACTIVE' });
+
+        const showFaqImportModal = ref(false);
+        const faqForm = reactive({ kb_id: '', items: [{ standard_question: '', similar_questions_text: '', answer: '', priority: 3 }] });
+
+        const showVersionModal = ref(false);
+        const selectedDoc = ref({});
+        const docVersions = ref([]);
+
+        const showPreviewDocModal = ref(false);
+        const previewDocData = ref({});
+
+        const showEditDocModal = ref(false);
+        const editDocForm = reactive({ id: '', name: '', priority: 3, content: '', version: 1 });
+
+        // 辅助函数：根据 kb_id 查询真实知识库名称（图一修复）
+        const getKbName = (kbId) => {
+          const k = kbs.value.find(item => item.id === kbId);
+          return k ? k.name : '产品知识库';
+        };
+
+        // ================= 3. 业务 API 与会话流转 =================
+
+        // 普通客户开启全新空白会话（重新登录或进入时触发，不复用历史）
+        const initCustomerNewSession = async (forceNew = true) => {
+          currentSession.value = null;
+          messageList.value = [];
+          try {
+            const custId = currentUserId.value || ('cust_' + Math.floor(Math.random() * 9000 + 1000));
+            currentUserId.value = custId;
+            const res = await authFetch('/api/v1/chat/sessions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                customer_id: custId,
+                customer_name: currentUserDisplayName.value || `客户 · ${custId}`,
+                product_code: currentProductCode.value,
+                force_new: forceNew
+              })
+            });
+            if (res.ok) {
+              const sess = await res.json();
+              currentSession.value = sess;
+              scrollToBottom();
+            }
+          } catch (e) {
+            console.error('初始化客户会话失败', e);
+          }
+        };
+
+        // 拉取所有会话列表并进行实时状态检查与分配提醒
+        const fetchSessions = async () => {
+          if (currentRole.value === 'user') return;
+          try {
+            const res = await authFetch('/api/v1/chat/sessions');
+            if (res.ok) {
+              const data = await res.json();
+              sessions.value = data;
+
+              // 技术客服：检测新分配工单提醒
+              if (currentRole.value === 'tech_agent') {
+                data.forEach(s => {
+                  if (s.assigned_agent === currentUserId.value && s.status === 'HUMAN_CONNECTED') {
+                    if (!knownAssignedIds.has(s.id)) {
+                      knownAssignedIds.add(s.id);
+                      // 若不是当前正在查看的会话，触发弹窗提醒
+                      if (!currentSession.value || currentSession.value.id !== s.id) {
+                        newAssignmentAlert.value = s;
+                      }
+                    }
+                  }
+                });
+              }
+
+              // 同步当前选中的会话状态
+              if (currentSession.value) {
+                const refreshed = data.find(x => x.id === currentSession.value.id);
+                if (refreshed) {
+                  currentSession.value.status = refreshed.status;
+                  currentSession.value.assigned_agent = refreshed.assigned_agent;
+                  currentSession.value.last_message = refreshed.last_message;
+                }
+              } else if (filteredSessions.value.length > 0) {
+                await switchSession(filteredSessions.value[0]);
+              }
+            }
+          } catch (e) {
+            console.error('加载会话列表失败', e);
+          }
+        };
+
+        const handleJumpToAssignedSession = async (sess) => {
+          newAssignmentAlert.value = null;
+          await switchSession(sess);
+        };
+
+        const switchSession = async (s) => {
+          currentSession.value = s;
+          currentProductCode.value = s.product_code;
+          inspectingSource.value = null;
+          try {
+            const res = await authFetch(`/api/v1/chat/sessions/${s.id}/messages`);
+            if (res.ok) {
+              messageList.value = await res.json();
+              scrollToBottom();
+            }
+          } catch (e) {
+            console.error('加载会话消息失败', e);
+          }
+        };
+
+        const onUserProductChange = async () => {
+          if (currentRole.value === 'user') {
+            await initCustomerNewSession(true);
+          }
+        };
+
+        // 定时轮询同步消息与状态（防竞态：思考中不覆盖列表）
+        let pollTimer = null;
+        const syncSessionMessages = async () => {
+          if (!isLoggedIn.value) return;
+
+          // 客服或超管角色：每轮刷新会话列表，实时感知用户接入与状态变化（免手动刷新）
+          if (currentRole.value !== 'user') {
+            await fetchSessions();
+          }
+
+          if (!currentSession.value || isThinking.value) return;
+
+          try {
+            const res = await authFetch(`/api/v1/chat/sessions/${currentSession.value.id}/messages`);
+            if (res.ok) {
+              const msgs = await res.json();
+              if (msgs && msgs.length > 0) {
+                const curLen = messageList.value.length;
+                if (msgs.length > curLen || (curLen > 0 && msgs[msgs.length - 1].id !== messageList.value[curLen - 1].id)) {
+                  messageList.value = msgs;
+                  scrollToBottom();
+                }
+              }
+            }
+          } catch (e) {}
+        };
+
+        const startPolling = () => {
+          stopPolling();
+          pollTimer = setInterval(syncSessionMessages, 2500);
+        };
+
+        const stopPolling = () => {
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+        };
+
+        // 发送消息（严格防吞、防崩溃）
+        const handleSend = async () => {
+          const q = inputQuery.value.trim();
+          if (!q || isThinking.value || !currentSession.value) return;
+
+          const tempMsg = {
+            id: 'temp_' + Date.now(),
+            role: currentRole.value === 'user' ? 'user' : 'human_agent',
+            content: q,
+            created_at: new Date().toISOString()
+          };
+          messageList.value.push(tempMsg);
+          inputQuery.value = '';
+          isThinking.value = true;
+          scrollToBottom();
+
+          try {
+            const resp = await authFetch('/api/v1/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                product_code: currentProductCode.value,
+                customer_id: currentSession.value.customer_id,
+                session_id: currentSession.value.id,
+                query: q
+              })
+            });
+
+            if (!resp.ok) {
+              const err = await resp.json().catch(() => ({}));
+              messageList.value.push({
+                id: 'err_' + Date.now(),
+                role: 'assistant',
+                reply_type: 'FALLBACK',
+                confidence_score: 0.0,
+                content: `⚠️ 对话服务提示: ${err.detail || '检索服务繁忙，请稍后重试'}`,
+                created_at: new Date().toISOString()
+              });
+              return;
+            }
+
+            const data = await resp.json();
+            if (currentRole.value === 'user') {
+              messageList.value.push({
+                id: 'ai_' + Date.now(),
+                role: data.reply_type === 'HUMAN_AGENT' ? 'human_agent' : 'assistant',
+                reply_type: data.reply_type,
+                confidence_score: data.confidence_score,
+                content: data.content,
+                raw_query: data.raw_query,
+                rewritten_query: data.rewritten_query,
+                sources: data.sources || [],
+                suggested_questions: data.suggested_questions || [],
+                business_data: data.business_data || null,
+                created_at: new Date().toISOString()
+              });
+            }
+            currentSession.value.last_message = q;
+          } catch (e) {
+            messageList.value.push({
+              id: 'net_err_' + Date.now(),
+              role: 'assistant',
+              reply_type: 'FALLBACK',
+              confidence_score: 0.0,
+              content: '网络连接出现波动，未能送达您的消息，请重试。'
+            });
+          } finally {
+            isThinking.value = false;
+            scrollToBottom();
+          }
+        };
+
+        const sendQuickPrompt = (txt) => {
+          inputQuery.value = txt;
+          handleSend();
+        };
+
+        // 用户转接人工座席
+        const handleManualTransferHuman = async () => {
+          if (!currentSession.value) return;
+          try {
+            const res = await authFetch('/api/v1/chat/transfer-human', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: currentSession.value.id,
+                customer_id: currentSession.value.customer_id
+              })
+            });
+            if (res.ok) {
+              const result = await res.json();
+              currentSession.value.status = 'HUMAN_CONNECTED';
+              currentSession.value.assigned_agent = result.agent;
+              const msgRes = await authFetch(`/api/v1/chat/sessions/${currentSession.value.id}/messages`);
+              if (msgRes.ok) {
+                messageList.value = await msgRes.json();
+                scrollToBottom();
+              }
+            }
+          } catch (e) {
+            console.error('转人工失败', e);
+          }
+        };
+
+        // 用户主动挂断人工服务
+        const handleUserHangup = async () => {
+          if (!currentSession.value) return;
+          try {
+            const res = await authFetch(`/api/v1/chat/hangup?session_id=${currentSession.value.id}`, { method: 'POST' });
+            if (res.ok) {
+              currentSession.value.status = 'AI_SERVICE';
+              currentSession.value.assigned_agent = null;
+              const msgRes = await authFetch(`/api/v1/chat/sessions/${currentSession.value.id}/messages`);
+              if (msgRes.ok) {
+                messageList.value = await msgRes.json();
+                scrollToBottom();
+              }
+            }
+          } catch (e) {
+            console.error('挂断人工失败', e);
+          }
+        };
+
+        // 客服/超管结束人工服务
+        const finishHumanService = async () => {
+          if (!currentSession.value) return;
+          try {
+            const res = await authFetch(`/api/v1/chat/finish-human?session_id=${currentSession.value.id}`, { method: 'POST' });
+            if (res.ok) {
+              currentSession.value.status = 'AI_SERVICE';
+              currentSession.value.assigned_agent = null;
+              const msgRes = await authFetch(`/api/v1/chat/sessions/${currentSession.value.id}/messages`);
+              if (msgRes.ok) {
+                messageList.value = await msgRes.json();
+                scrollToBottom();
+              }
+            }
+          } catch (e) {
+            console.error('结束人工失败', e);
+          }
+        };
+
+        const openSourceDrawer = (src) => {
+          inspectingSource.value = src;
+        };
+
+        const scrollToBottom = () => {
+          nextTick(() => {
+            if (chatContainer.value) {
+              chatContainer.value.scrollTop = chatContainer.value.scrollHeight;
+            }
+          });
+        };
+
+        // ================= 4. 知识库与文档 API (修复图一名称、删除联动与审核流) =================
+
+        // 拉取知识库列表（技术客服直接调用，拿真实名称，消除图一的哈希截断名称）
+        const fetchKBs = async () => {
+          try {
+            const res = await authFetch('/api/v1/kbs');
+            if (res.ok) {
+              kbs.value = await res.json();
+              if (kbs.value.length > 0 && !newDoc.kb_id) {
+                newDoc.kb_id = kbs.value[0].id;
+                faqForm.kb_id = kbs.value[0].id;
+              }
+            }
+          } catch (e) {
+            console.error('加载知识库失败', e);
+          }
+        };
+
+        const onFilterKbChange = async () => {
+          filterDocId.value = '';
+          await refreshDocAndChunks();
+        };
+
+        const onFilterDocChange = async () => {
+          await refreshChunks();
+        };
+
+        const refreshDocs = async () => {
+          if (!hasMenuPermission('chunks')) return;
+          let url = `/api/v1/documents?page=1&page_size=100`;
+          if (filterKbId.value) url += `&kb_id=${filterKbId.value}`;
+          if (filterDocType.value) url += `&doc_type=${filterDocType.value}`;
+          if (filterDocStatus.value) url += `&status=${filterDocStatus.value}`;
+          if (searchKeyword.value) url += `&name=${encodeURIComponent(searchKeyword.value.trim())}`;
+          try {
+            const res = await authFetch(url);
+            if (res.ok) {
+              documents.value = await res.json();
+            }
+          } catch (e) {}
+        };
+
+        const refreshChunks = async () => {
+          if (!hasMenuPermission('chunks')) return;
+          let url = `/api/v1/chunks?page=1&page_size=50`;
+          if (filterDocId.value) {
+            url += `&doc_id=${filterDocId.value}`;
+          } else if (filterKbId.value) {
+            url += `&kb_id=${filterKbId.value}`;
+          }
+          if (searchKeyword.value && searchKeyword.value.trim()) {
+            url += `&keyword=${encodeURIComponent(searchKeyword.value.trim())}`;
+          }
+          try {
+            const res = await authFetch(url);
+            if (res.ok) {
+              const data = await res.json();
+              chunkList.value = data.items || [];
+            }
+          } catch (e) {}
+        };
+
+        const refreshDocAndChunks = async () => {
+          await refreshDocs();
+          await refreshChunks();
+        };
+
+        const handleSearch = () => {
+          refreshDocAndChunks();
+        };
+
+        // 超管审核流操作
+        const approveDoc = async (doc) => {
+          if (confirm(`确认批准文档【${doc.name}】生效并立即生成高维向量切片？`)) {
+            const res = await authFetch(`/api/v1/documents/${doc.id}/approve`, { method: 'POST' });
+            if (res.ok) {
+              const resData = await res.json();
+              alert(resData.message || '文档已成功批准并生效！');
+              await fetchKBs();
+              await refreshDocAndChunks();
+            } else {
+              alert('审核操作失败');
+            }
+          }
+        };
+
+        const rejectDoc = async (doc) => {
+          const reason = prompt('请输入驳回理由:', '文档内容不合规或缺少格式');
+          if (reason !== null) {
+            const res = await authFetch(`/api/v1/documents/${doc.id}/reject?reason=${encodeURIComponent(reason)}`, { method: 'POST' });
+            if (res.ok) {
+              alert('该文档已被驳回');
+              await refreshDocAndChunks();
+            }
+          }
+        };
+
+        // 删除知识库（前端实时级联消除，无需刷新）
+        const confirmDeleteKB = async (kb) => {
+          if (confirm(`⚠️ 危险操作：确认删除知识库【${kb.name}】吗？\n将级联删除其下的所有知识文档、切片及向量索引！`)) {
+            const res = await authFetch(`/api/v1/kbs/${kb.id}`, { method: 'DELETE' });
+            if (res.status === 403) return alert('权限不足：仅超级管理员可执行级联删除操作！');
+            
+            // 实时前端响应式删除，无需刷新页面
+            kbs.value = kbs.value.filter(k => k.id !== kb.id);
+            documents.value = documents.value.filter(d => d.kb_id !== kb.id);
+            chunkList.value = chunkList.value.filter(c => c.kb_id !== kb.id);
+            if (filterKbId.value === kb.id) {
+              filterKbId.value = '';
+              filterDocId.value = '';
+            }
+            alert(`知识库【${kb.name}】及其全部文档和切片已成功级联删除！`);
+          }
+        };
+
+        // 图三重构：打开弹窗并选择文件
+        const openUploadModal = () => {
+          uploadDocTab.value = 'file';
+          selectedFileName.value = '';
+          newDoc.name = '';
+          newDoc.content = '';
+          isSubmittingDoc.value = false;
+          showUploadDocModal.value = true;
+        };
+
+        const onFileSelected = (e) => {
+          if (e.target.files && e.target.files[0]) {
+            selectedFileName.value = e.target.files[0].name;
+          }
+        };
+
+        // 提交上传/录入文档（含 Loading 与防重）
+        const submitCreateDoc = async () => {
+          if (!newDoc.kb_id) {
+            return alert('请先选择归属知识库');
+          }
+
+          isSubmittingDoc.value = true;
+          try {
+            if (uploadDocTab.value === 'file') {
+              if (!fileInput.value || !fileInput.value.files || !fileInput.value.files[0]) {
+                isSubmittingDoc.value = false;
+                return alert('请先点击虚线框选择本地 .md 或 .txt 文件');
+              }
+              const formData = new FormData();
+              formData.append('kb_id', newDoc.kb_id);
+              formData.append('priority', newDoc.priority || 3);
+              formData.append('file', fileInput.value.files[0]);
+              formData.append('created_by', roleLabel.value);
+
+              const res = await authFetch('/api/v1/documents/upload', {
+                method: 'POST',
+                body: formData
+              });
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                isSubmittingDoc.value = false;
+                return alert(err.detail || '上传文档失败');
+              }
+              const resData = await res.json();
+              if (currentRole.value === 'tech_agent') {
+                alert('文档提交成功！已进入【待审核】队列，等待超级管理员审批后切片生效。');
+              } else {
+                alert('文档上传并向量切片成功！');
+              }
+            } else {
+              if (!newDoc.name || !newDoc.content) {
+                isSubmittingDoc.value = false;
+                return alert('请填写文档标题和正文内容');
+              }
+              const res = await authFetch('/api/v1/documents', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newDoc)
+              });
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                isSubmittingDoc.value = false;
+                return alert(err.detail || '创建文档失败');
+              }
+              if (currentRole.value === 'tech_agent') {
+                alert('在线文档提交成功！已进入【待审核】队列，超管审批后生效。');
+              } else {
+                alert('知识文档创建并切片成功！');
+              }
+            }
+
+            showUploadDocModal.value = false;
+            newDoc.name = '';
+            newDoc.content = '';
+            selectedFileName.value = '';
+            if (fileInput.value) fileInput.value.value = '';
+            await fetchKBs();
+            await refreshDocAndChunks();
+          } catch (e) {
+            alert('网络错误，请稍后重试');
+          } finally {
+            isSubmittingDoc.value = false;
+          }
+        };
+
+        const submitCreateKB = async () => {
+          if (!newKB.name) return alert('请填写知识库名称');
+          const res = await authFetch('/api/v1/kbs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newKB)
+          });
+          if (res.status === 403) return alert('权限不足：仅超级管理员可创建知识库！');
+          if (res.ok) {
+            showCreateKBDocModal.value = false;
+            newKB.name = '';
+            newKB.description = '';
+            await fetchKBs();
+          } else {
+            const err = await res.json();
+            alert(err.detail || '创建失败');
+          }
+        };
+
+        const toggleKBStatus = async (kb) => {
+          const newStatus = kb.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+          const res = await authFetch(`/api/v1/kbs/${kb.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+          });
+          if (res.status === 403) return alert('权限不足：仅超级管理员可操作！');
+          if (res.ok) {
+            kb.status = newStatus;
+          }
+        };
+
+        const openEditKBModal = (kb) => {
+          editKBForm.id = kb.id;
+          editKBForm.name = kb.name;
+          editKBForm.description = kb.description || '';
+          editKBForm.status = kb.status;
+          showEditKBModal.value = true;
+        };
+
+        const saveKBBasicInfo = async () => {
+          const res = await authFetch(`/api/v1/kbs/${editKBForm.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: editKBForm.name,
+              description: editKBForm.description,
+              status: editKBForm.status
+            })
+          });
+          if (res.status === 403) return alert('权限不足！');
+          showEditKBModal.value = false;
+          await fetchKBs();
+        };
+
+        const openConfigModal = (kb) => {
+          editingKB.value = kb;
+          const cfg = kb.config || {};
+          kbConfigForm.threshold_direct = cfg.threshold_direct || 0.80;
+          kbConfigForm.threshold_clarify = cfg.threshold_clarify || 0.50;
+          kbConfigForm.bm25_top_k = cfg.bm25_top_k || 15;
+          kbConfigForm.vector_top_k = cfg.vector_top_k || 15;
+          kbConfigForm.rerank_top_k = cfg.rerank_top_k || 3;
+          showConfigModal.value = true;
+        };
+
+        const saveKBConfig = async () => {
+          const res = await authFetch(`/api/v1/kbs/${editingKB.value.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: kbConfigForm })
+          });
+          if (res.status === 403) return alert('权限不足！');
+          showConfigModal.value = false;
+          await fetchKBs();
+          alert('知识库检索阈值与TopK参数已更新生效！');
+        };
+
+        const openPreviewDoc = (doc) => {
+          previewDocData.value = doc;
+          showPreviewDocModal.value = true;
+        };
+
+        const openEditDocModal = (doc) => {
+          editDocForm.id = doc.id;
+          editDocForm.name = doc.name;
+          editDocForm.priority = doc.priority;
+          editDocForm.content = doc.content || '';
+          editDocForm.version = doc.version;
+          showEditDocModal.value = true;
+        };
+
+        const submitSaveDocEdit = async () => {
+          if (!editDocForm.name || !editDocForm.content) return alert('文档标题和内容不能为空');
+          const res = await authFetch(`/api/v1/documents/${editDocForm.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: editDocForm.name,
+              priority: editDocForm.priority,
+              content: editDocForm.content
+            })
+          });
+          if (res.status === 403) return alert('权限不足！');
+          showEditDocModal.value = false;
+          await fetchKBs();
+          await refreshDocAndChunks();
+          if (currentRole.value === 'tech_agent') {
+            alert('修改已保存，由于您是技术客服，修改已进入【待审核】状态，超管审批通过后切片更新。');
+          } else {
+            alert('文档已成功更新，新版本已生效并重新切片！');
+          }
+        };
+
+        const viewDocChunks = (doc) => {
+          chunkViewTab.value = 'chunks';
+          filterKbId.value = doc.kb_id;
+          filterDocId.value = doc.id;
+          refreshChunks();
+        };
+
+        const addFaqRow = () => {
+          faqForm.items.push({ standard_question: '', similar_questions_text: '', answer: '', priority: 3 });
+        };
+
+        const submitBatchFAQ = async () => {
+          const payloadItems = faqForm.items.map(it => ({
+            standard_question: it.standard_question,
+            similar_questions: it.similar_questions_text ? it.similar_questions_text.split(/[;；\n]+/).map(s => s.trim()).filter(Boolean) : [],
+            answer: it.answer,
+            priority: it.priority || 3
+          }));
+          const res = await authFetch('/api/v1/documents/faq/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              kb_id: faqForm.kb_id,
+              document_name: '结构化FAQ问答集',
+              items: payloadItems
+            })
+          });
+          if (!res.ok) return alert('批量导入失败');
+          showFaqImportModal.value = false;
+          await fetchKBs();
+          await refreshDocAndChunks();
+          alert('FAQ 录入成功！');
+        };
+
+        const openVersionModal = async (doc) => {
+          selectedDoc.value = doc;
+          const res = await authFetch(`/api/v1/documents/${doc.id}/versions`);
+          if (res.ok) {
+            docVersions.value = await res.json();
+            showVersionModal.value = true;
+          }
+        };
+
+        const rollbackVersion = async (targetVer) => {
+          if (confirm(`确认将文档【${selectedDoc.value.name}】回滚到历史版本 v${targetVer} 吗？`)) {
+            const res = await authFetch(`/api/v1/documents/${selectedDoc.value.id}/rollback?target_version=${targetVer}`, { method: 'POST' });
+            if (res.ok) {
+              showVersionModal.value = false;
+              await fetchKBs();
+              await refreshDocAndChunks();
+              alert(`已成功恢复历史版本 v${targetVer}！`);
+            }
+          }
+        };
+
+        const deleteDoc = async (doc) => {
+          if (confirm(`确认删除文档【${doc.name}】？关联切片也将一并清除。`)) {
+            const res = await authFetch(`/api/v1/documents/${doc.id}`, { method: 'DELETE' });
+            if (res.ok) {
+              await fetchKBs();
+              await refreshDocAndChunks();
+            }
+          }
+        };
+
+        const submitCreateSession = async () => {
+          if (!newSessionForm.customer_name || !newSessionForm.customer_id) return alert('请填写客户姓名与ID');
+          const res = await authFetch('/api/v1/chat/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              customer_id: newSessionForm.customer_id,
+              customer_name: newSessionForm.customer_name,
+              product_code: currentProductCode.value
+            })
+          });
+          if (res.ok) {
+            const created = await res.json();
+            showNewSessionModal.value = false;
+            newSessionForm.customer_name = '';
+            newSessionForm.customer_id = '';
+            await fetchSessions();
+            await switchSession(created);
+          }
+        };
+
+        // ================= 5. 认证与登录退出 =================
+
+        const handleLoginSubmit = async () => {
+          if (!loginForm.username || !loginForm.password) {
+            loginError.value = '请输入登录账号与密码';
+            return;
+          }
+          loginLoading.value = true;
+          loginError.value = '';
+          try {
+            const res = await fetch('/api/v1/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                username: loginForm.username,
+                password: loginForm.password
+              })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              currentRole.value = data.role;
+              currentUserId.value = data.user_id;
+              currentUsername.value = data.username;
+              currentUserDisplayName.value = data.display_name;
+              currentUserProduct.value = data.product_code || (data.role === 'tech_agent' ? 'SAAS_CLOUD' : '');
+              if (currentUserProduct.value) {
+                currentProductCode.value = currentUserProduct.value;
+              }
+              isLoggedIn.value = true;
+              localStorage.setItem('smart_cs_user', JSON.stringify(data));
+
+              // 角色初始化
+              if (data.role === 'user') {
+                activeMenu.value = 'chat';
+                await initCustomerNewSession(true);
+              } else {
+                activeMenu.value = 'chat';
+                await fetchKBs();
+                await fetchSessions();
+                if (hasMenuPermission('chunks')) {
+                  await refreshDocAndChunks();
+                }
+              }
+              startPolling();
+            } else {
+              const err = await res.json().catch(() => ({}));
+              loginError.value = err.detail || '账号或密码错误';
+            }
+          } catch (e) {
+            loginError.value = '网络异常，请重试';
+          } finally {
+            loginLoading.value = false;
+          }
+        };
+
+        const quickFillLogin = (u, p) => {
+          loginForm.username = u;
+          loginForm.password = p;
+          handleLoginSubmit();
+        };
+
+        const handleLogout = () => {
+          localStorage.removeItem('smart_cs_user');
+          isLoggedIn.value = false;
+          stopPolling();
+          currentSession.value = null;
+          messageList.value = [];
+          loginForm.username = '';
+          loginForm.password = '';
+        };
+
+        // 窗口关闭/离开时自动挂断（若在人工接待模式）
+        window.addEventListener('beforeunload', () => {
+          if (isLoggedIn.value && currentRole.value === 'user' && currentSession.value && currentSession.value.status === 'HUMAN_CONNECTED') {
+            navigator.sendBeacon(`/api/v1/chat/hangup?session_id=${currentSession.value.id}`);
+          }
+        });
+
+        // 挂载执行
+        onMounted(async () => {
+          if (isLoggedIn.value) {
+            if (currentRole.value === 'user') {
+              activeMenu.value = 'chat';
+              await initCustomerNewSession(true);
+            } else {
+              await fetchKBs();
+              await fetchSessions();
+              if (hasMenuPermission('chunks')) {
+                await refreshDocAndChunks();
+              }
+            }
+            startPolling();
+          }
+        });
+
+        return {
+          isLoggedIn,
+          loginForm,
+          loginError,
+          loginLoading,
+          currentUserDisplayName,
+          currentUsername,
+          currentUserProduct,
+          currentRole,
+          currentUserId,
+          roleLabel,
+          hasMenuPermission,
+          canManageHumanSession,
+          activeMenu,
+          currentProductCode,
+          sessions,
+          filteredSessions,
+          sessionFilterStatus,
+          currentSession,
+          messageList,
+          inputQuery,
+          isThinking,
+          chatContainer,
+          inspectingSource,
+          newAssignmentAlert,
+          handleJumpToAssignedSession,
+          kbs,
+          chunkViewTab,
+          documents,
+          chunkList,
+          filterKbId,
+          filterDocType,
+          filterDocStatus,
+          filterDocId,
+          searchKeyword,
+          getKbName,
+          showUploadDocModal,
+          uploadDocTab,
+          isSubmittingDoc,
+          selectedFileName,
+          fileInput,
+          newDoc,
+          openUploadModal,
+          onFileSelected,
+          submitCreateDoc,
+          showNewSessionModal,
+          newSessionForm,
+          submitCreateSession,
+          showCreateKBDocModal,
+          newKB,
+          submitCreateKB,
+          showConfigModal,
+          editingKB,
+          kbConfigForm,
+          openConfigModal,
+          saveKBConfig,
+          showEditKBModal,
+          editKBForm,
+          openEditKBModal,
+          saveKBBasicInfo,
+          showFaqImportModal,
+          faqForm,
+          addFaqRow,
+          submitBatchFAQ,
+          showVersionModal,
+          selectedDoc,
+          docVersions,
+          openVersionModal,
+          rollbackVersion,
+          showPreviewDocModal,
+          previewDocData,
+          openPreviewDoc,
+          showEditDocModal,
+          editDocForm,
+          openEditDocModal,
+          submitSaveDocEdit,
+          viewDocChunks,
+          deleteDoc,
+          approveDoc,
+          rejectDoc,
+          confirmDeleteKB,
+          toggleKBStatus,
+          onFilterKbChange,
+          onFilterDocChange,
+          refreshDocs,
+          refreshChunks,
+          refreshDocAndChunks,
+          handleSearch,
+          switchSession,
+          handleSend,
+          sendQuickPrompt,
+          handleManualTransferHuman,
+          handleUserHangup,
+          finishHumanService,
+          openSourceDrawer,
+          onUserProductChange,
+          handleLoginSubmit,
+          quickFillLogin,
+          handleLogout
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
+'''
+
+with open('app/static/index.html', 'w', encoding='utf-8') as f:
+    f.write(html_content)
+
+print("index.html overwritten successfully!")

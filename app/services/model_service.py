@@ -200,6 +200,26 @@ class ModelService:
                 return "CHITCHAT"
         return "KNOWLEDGE"
 
+    async def chat_completion(self, messages: List[Dict[str, str]], temperature: float = 0.2) -> str:
+        """通用 LLM 聊天接口 (DeepSeek)"""
+        if self.llm_api_key and "sk-" in self.llm_api_key:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        f"{self.llm_base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {self.llm_api_key}"},
+                        json={
+                            "model": self.llm_model,
+                            "messages": messages,
+                            "temperature": temperature
+                        }
+                    )
+                    if resp.status_code == 200:
+                        return resp.json()["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                print(f"[ModelService] chat_completion error: {e}")
+        return ""
+
     async def generate_direct_answer(self, query: str, contexts: List[Dict[str, Any]]) -> str:
         """根据召回的高置信证据生成直接回答"""
         context_str = "\n\n".join([
@@ -208,29 +228,18 @@ class ModelService:
         ])
 
         if self.llm_api_key and "sk-" in self.llm_api_key:
-            try:
-                system_prompt = (
-                    "你是一名专业的客服机器人。请基于以下提供的参考资料回答用户问题。"
-                    "回答必须准确客观、语气友好亲切。如果资料中未包含明确信息，切勿胡乱编造。"
-                )
-                user_prompt = f"参考资料：\n{context_str}\n\n用户提问：{query}\n\n请给出清晰专业的客服解答："
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.post(
-                        f"{self.llm_base_url}/chat/completions",
-                        headers={"Authorization": f"Bearer {self.llm_api_key}"},
-                        json={
-                            "model": self.llm_model,
-                            "messages": [
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_prompt}
-                            ],
-                            "temperature": 0.3
-                        }
-                    )
-                    if resp.status_code == 200:
-                        return resp.json()["choices"][0]["message"]["content"].strip()
-            except Exception:
-                pass
+            system_prompt = (
+                "你是一名专业的电商平台官方客服助手。请严格基于以下提供的参考资料，准确客观、友好清晰地回答用户问题。\n"
+                "如果资料中有具体的数字、金额、时限、比例、规则，请务必准确给出。\n"
+                "如果资料中未包含明确信息，切勿胡乱编造。"
+            )
+            user_prompt = f"参考资料：\n{context_str}\n\n用户提问：{query}\n\n请给出清晰专业的客服解答："
+            ans = await self.chat_completion([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ], temperature=0.1)
+            if ans:
+                return ans
 
         # 离线/内置生成器（萃取最核心证据首段并友好组装）
         best_chunk = contexts[0] if contexts else {}

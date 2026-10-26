@@ -18,26 +18,89 @@ from app.schemas.document import (
 )
 from app.services.chunking.splitter import DocumentChunker
 from app.services.model_service import model_service
-from app.core.auth import require_roles, ROLE_ADMIN, ROLE_TECH_AGENT
+from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT
 
-# 知识文档与FAQ管理模块仅对 超级管理员 与 技术客服 开放
+# 知识文档与FAQ管理模块对 超级管理员 与 技术客服 开放
 router = APIRouter(
     prefix="/documents", 
     tags=["知识文档与FAQ管理"],
     dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT]))]
 )
 
-@router.post("/upload", response_model=DocumentResponse, summary="直接上传本地文件并解析分块 (MD / TXT)")
+async def index_document_chunks(doc: Document, db: AsyncSession) -> int:
+    """
+    为生效文档构建切片并向量化入库（审核通过或超管直接发布时触发）
+    """
+    # 彻底清除可能存在的旧切片
+    await db.execute(delete(DocumentChunk).where(DocumentChunk.doc_id == doc.id))
+    
+    doc_info = {"id": doc.id, "name": doc.name, "priority": doc.priority}
+    if doc.doc_type == "MD":
+        raw_chunks = DocumentChunker.chunk_markdown(doc.content or "", doc_info)
+    elif doc.doc_type == "TXT":
+        raw_chunks = DocumentChunker.chunk_txt(doc.content or "", doc_info)
+    elif doc.doc_type == "FAQ":
+        # 如果是 FAQ，从关联的 FAQItem 中读取
+        faq_stmt = select(FAQItem).where(FAQItem.doc_id == doc.id)
+        faqs = (await db.execute(faq_stmt)).scalars().all()
+        faq_dicts = [
+            {
+                "standard_question": f.standard_question,
+                "similar_questions": f.similar_questions or [],
+                "answer": f.answer,
+                "priority": f.priority
+            }
+            for f in faqs
+        ]
+        raw_chunks = DocumentChunker.chunk_faq(faq_dicts, doc_info)
+    else:
+        raw_chunks = []
+
+    for rc in raw_chunks:
+        emb = await model_service.get_embedding(rc.content)
+        chunk_model = DocumentChunk(
+            kb_id=doc.kb_id,
+            doc_id=doc.id,
+            chunk_index=rc.chunk_index,
+            content=rc.content,
+            embedding=emb,
+            heading_path=rc.heading_path,
+            priority=doc.priority,
+            metadata_info=rc.metadata
+        )
+        db.add(chunk_model)
+
+    await db.flush()
+
+    # 维护知识库统计计数
+    kb = await db.get(KnowledgeBase, doc.kb_id)
+    if kb:
+        c_count_stmt = select(func.count(DocumentChunk.id)).where(DocumentChunk.kb_id == kb.id)
+        kb.chunk_count = (await db.execute(c_count_stmt)).scalar() or 0
+        
+        doc_count_stmt = select(func.count(Document.id)).where(Document.kb_id == kb.id, Document.status == "ACTIVE")
+        kb.doc_count = (await db.execute(doc_count_stmt)).scalar() or 0
+
+    return len(raw_chunks)
+
+@router.post("/upload", response_model=DocumentResponse, summary="上传本地文件 (技术客服提交需超管审核，超管上传直接生效)")
 async def upload_document(
     kb_id: str = Form(...),
     priority: int = Form(1),
     file: UploadFile = File(...),
-    created_by: str = Form("admin"),
+    created_by: str = Form("system"),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="目标知识库不存在")
+
+    # 权限隔离校验：技术客服只能向自己所属产品的知识库提交文档
+    if current_user.role == ROLE_TECH_AGENT:
+        allowed_product = current_user.product_code or "SAAS_CLOUD"
+        if kb.product_code != allowed_product:
+            raise HTTPException(status_code=403, detail="权限不足：您不能向非本产品归属的知识库上传文档")
 
     filename = file.filename or "uploaded_file.txt"
     ext = filename.rsplit(".", 1)[-1].upper() if "." in filename else "TXT"
@@ -49,6 +112,10 @@ async def upload_document(
     except UnicodeDecodeError:
         content_text = content_bytes.decode("gbk", errors="ignore")
 
+    # 审核流逻辑：技术客服提交设为 PENDING_REVIEW 待审核；超管直接 ACTIVE
+    is_tech = (current_user.role == ROLE_TECH_AGENT)
+    doc_status = "PENDING_REVIEW" if is_tech else "ACTIVE"
+
     doc = Document(
         kb_id=kb_id,
         name=filename,
@@ -57,9 +124,9 @@ async def upload_document(
         file_size=len(content_bytes),
         priority=priority,
         version=1,
-        status="ACTIVE",
-        created_by=created_by,
-        updated_by=created_by
+        status=doc_status,
+        created_by=current_user.username or created_by,
+        updated_by=current_user.username or created_by
     )
     db.add(doc)
     await db.flush()
@@ -68,46 +135,37 @@ async def upload_document(
         doc_id=doc.id,
         version=1,
         content=content_text,
-        metadata_snapshot={"name": doc.name, "doc_type": doc.doc_type},
-        created_by=created_by
+        metadata_snapshot={"name": doc.name, "doc_type": doc.doc_type, "status": doc_status},
+        created_by=doc.created_by
     )
     db.add(initial_version)
 
-    doc_info = {"id": doc.id, "name": doc.name, "priority": doc.priority}
-    if doc_type == "MD":
-        raw_chunks = DocumentChunker.chunk_markdown(content_text, doc_info)
-    else:
-        raw_chunks = DocumentChunker.chunk_txt(content_text, doc_info)
-
-    for rc in raw_chunks:
-        emb = await model_service.get_embedding(rc.content)
-        chunk_model = DocumentChunk(
-            kb_id=doc.kb_id,
-            doc_id=doc.id,
-            chunk_index=rc.chunk_index,
-            content=rc.content,
-            embedding=emb,
-            heading_path=rc.heading_path,
-            priority=doc.priority,
-            metadata_info=rc.metadata
-        )
-        db.add(chunk_model)
-
-    kb.doc_count += 1
-    kb.chunk_count += len(raw_chunks)
+    # 仅在 ACTIVE 状态下才执行向量切片入库
+    if doc_status == "ACTIVE":
+        await index_document_chunks(doc, db)
 
     await db.commit()
     await db.refresh(doc)
     return doc
 
-@router.post("", response_model=DocumentResponse, summary="新增知识文档 (MD / TXT)")
-async def create_document(payload: DocumentCreate, db: AsyncSession = Depends(get_db)):
-    # 1. 验证知识库存在
+@router.post("", response_model=DocumentResponse, summary="新增知识文档 (技术客服提交需超管审核，超管创建直接生效)")
+async def create_document(
+    payload: DocumentCreate, 
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     kb = await db.get(KnowledgeBase, payload.kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="目标知识库不存在")
 
-    # 2. 创建文档主体
+    if current_user.role == ROLE_TECH_AGENT:
+        allowed_product = current_user.product_code or "SAAS_CLOUD"
+        if kb.product_code != allowed_product:
+            raise HTTPException(status_code=403, detail="权限不足：您不能向非本产品归属的知识库创建文档")
+
+    is_tech = (current_user.role == ROLE_TECH_AGENT)
+    doc_status = "PENDING_REVIEW" if is_tech else "ACTIVE"
+
     doc = Document(
         kb_id=payload.kb_id,
         name=payload.name,
@@ -116,60 +174,47 @@ async def create_document(payload: DocumentCreate, db: AsyncSession = Depends(ge
         file_size=len(payload.content.encode("utf-8")),
         priority=payload.priority,
         version=1,
-        status="ACTIVE",
-        created_by=payload.created_by or "admin",
-        updated_by=payload.created_by or "admin"
+        status=doc_status,
+        created_by=current_user.username or payload.created_by or "system",
+        updated_by=current_user.username or payload.created_by or "system"
     )
     db.add(doc)
     await db.flush()
 
-    # 3. 归档初始版本快照
     initial_version = DocumentVersion(
         doc_id=doc.id,
         version=1,
         content=payload.content,
-        metadata_snapshot={"name": doc.name, "doc_type": doc.doc_type},
+        metadata_snapshot={"name": doc.name, "doc_type": doc.doc_type, "status": doc_status},
         created_by=doc.created_by
     )
     db.add(initial_version)
 
-    # 4. 执行自动切片
-    doc_info = {"id": doc.id, "name": doc.name, "priority": doc.priority}
-    if payload.doc_type == "MD":
-        raw_chunks = DocumentChunker.chunk_markdown(payload.content, doc_info)
-    else:
-        raw_chunks = DocumentChunker.chunk_txt(payload.content, doc_info)
-
-    # 5. 向量化与持久化 Chunks
-    for rc in raw_chunks:
-        emb = await model_service.get_embedding(rc.content)
-        chunk_model = DocumentChunk(
-            kb_id=doc.kb_id,
-            doc_id=doc.id,
-            chunk_index=rc.chunk_index,
-            content=rc.content,
-            embedding=emb,
-            heading_path=rc.heading_path,
-            priority=doc.priority,
-            metadata_info=rc.metadata
-        )
-        db.add(chunk_model)
-
-    # 6. 更新知识库文档统计
-    kb.doc_count += 1
-    kb.chunk_count += len(raw_chunks)
+    if doc_status == "ACTIVE":
+        await index_document_chunks(doc, db)
 
     await db.commit()
     await db.refresh(doc)
     return doc
 
-@router.post("/faq/batch", summary="FAQ 结构化批量导入（标准问 + 相似问法列表 + 标准答案）")
-async def batch_import_faq(payload: FAQBatchImportRequest, db: AsyncSession = Depends(get_db)):
+@router.post("/faq/batch", summary="FAQ 结构化批量导入 (技术客服提交进入审核流)")
+async def batch_import_faq(
+    payload: FAQBatchImportRequest, 
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     kb = await db.get(KnowledgeBase, payload.kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="目标知识库不存在")
 
-    # 1. 建立聚合 FAQ 文档载体
+    if current_user.role == ROLE_TECH_AGENT:
+        allowed_product = current_user.product_code or "SAAS_CLOUD"
+        if kb.product_code != allowed_product:
+            raise HTTPException(status_code=403, detail="权限不足：您不能向非本产品归属的知识库录入FAQ")
+
+    is_tech = (current_user.role == ROLE_TECH_AGENT)
+    doc_status = "PENDING_REVIEW" if is_tech else "ACTIVE"
+
     doc = Document(
         kb_id=payload.kb_id,
         name=payload.document_name,
@@ -177,15 +222,13 @@ async def batch_import_faq(payload: FAQBatchImportRequest, db: AsyncSession = De
         file_size=0,
         priority=1,
         version=1,
-        status="ACTIVE",
-        created_by=payload.created_by or "admin",
-        updated_by=payload.created_by or "admin"
+        status=doc_status,
+        created_by=current_user.username or payload.created_by or "system",
+        updated_by=current_user.username or payload.created_by or "system"
     )
     db.add(doc)
     await db.flush()
 
-    # 2. 逐条沉淀 FAQ 条目并生成原子切片
-    faq_dicts = []
     total_size = 0
     for item in payload.items:
         faq_row = FAQItem(
@@ -198,12 +241,6 @@ async def batch_import_faq(payload: FAQBatchImportRequest, db: AsyncSession = De
         )
         db.add(faq_row)
         total_size += len(item.answer.encode("utf-8"))
-        faq_dicts.append({
-            "standard_question": item.standard_question,
-            "similar_questions": item.similar_questions,
-            "answer": item.answer,
-            "priority": item.priority
-        })
 
     doc.file_size = total_size
     faq_text = "\n\n".join([
@@ -214,56 +251,47 @@ async def batch_import_faq(payload: FAQBatchImportRequest, db: AsyncSession = De
     ])
     doc.content = faq_text
 
-    # 归档 FAQ 初始版本
     initial_version = DocumentVersion(
         doc_id=doc.id,
         version=1,
         content=faq_text,
-        metadata_snapshot={"name": doc.name, "doc_type": "FAQ", "count": len(payload.items)},
+        metadata_snapshot={"name": doc.name, "doc_type": "FAQ", "count": len(payload.items), "status": doc_status},
         created_by=doc.created_by
     )
     db.add(initial_version)
 
-    # 3. FAQ 零切片增强
-    doc_info = {"id": doc.id, "name": doc.name, "priority": doc.priority}
-    chunks = DocumentChunker.chunk_faq(faq_dicts, doc_info)
-
-    # 4. 向量化入库
-    for c in chunks:
-        emb = await model_service.get_embedding(c.content)
-        chunk_model = DocumentChunk(
-            kb_id=doc.kb_id,
-            doc_id=doc.id,
-            chunk_index=c.chunk_index,
-            content=c.content,
-            embedding=emb,
-            heading_path=c.heading_path,
-            priority=c.metadata.get("priority", 1),
-            metadata_info=c.metadata
-        )
-        db.add(chunk_model)
-
-    kb.doc_count += 1
-    kb.chunk_count += len(chunks)
+    chunk_count = 0
+    if doc_status == "ACTIVE":
+        chunk_count = await index_document_chunks(doc, db)
 
     await db.commit()
     return {
-        "message": f"成功批量导入 {len(payload.items)} 条 FAQ 知识",
+        "message": f"成功录入 {len(payload.items)} 条 FAQ 知识" + ("（已生效并切片）" if doc_status == "ACTIVE" else "（已提交待超管审核）"),
         "doc_id": doc.id,
-        "chunk_count": len(chunks)
+        "status": doc_status,
+        "chunk_count": chunk_count
     }
 
-@router.get("", response_model=List[DocumentResponse], summary="条件分页查询知识文档")
+@router.get("", response_model=List[DocumentResponse], summary="条件分页查询知识文档 (带产品权限隔离)")
 async def list_documents(
     kb_id: Optional[str] = Query(None, description="知识库ID"),
     name: Optional[str] = Query(None, description="文档名称模糊匹配"),
     doc_type: Optional[str] = Query(None, description="类型: FAQ, MD, TXT"),
     priority: Optional[int] = Query(None, ge=1, le=5, description="优先级"),
+    status: Optional[str] = Query(None, description="状态: ACTIVE, PENDING_REVIEW, REJECTED"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(50, ge=1, le=100),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(Document)
+
+    # 技术客服数据隔离：只能看自己产品线下的知识库文档
+    if current_user.role == ROLE_TECH_AGENT:
+        allowed_product = current_user.product_code or "SAAS_CLOUD"
+        kb_subq = select(KnowledgeBase.id).where(KnowledgeBase.product_code == allowed_product)
+        stmt = stmt.where(Document.kb_id.in_(kb_subq))
+
     if kb_id:
         stmt = stmt.where(Document.kb_id == kb_id)
     if name:
@@ -272,6 +300,8 @@ async def list_documents(
         stmt = stmt.where(Document.doc_type == doc_type)
     if priority:
         stmt = stmt.where(Document.priority == priority)
+    if status:
+        stmt = stmt.where(Document.status == status)
 
     stmt = stmt.order_by(Document.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
     res = await db.execute(stmt)
@@ -303,24 +333,25 @@ async def get_document_detail(doc_id: str, db: AsyncSession = Depends(get_db)):
         ]
     }
 
-@router.put("/{doc_id}", response_model=DocumentResponse, summary="编辑文档（版本自动递增并归档快照，重新切片构建索引）")
+@router.put("/{doc_id}", response_model=DocumentResponse, summary="编辑文档 (客服编辑后进入待审核状态)")
 async def update_document(
     doc_id: str, 
     payload: DocumentUpdate, 
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     doc = await db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
-    # 若更新了内容，执行版本自增与切片重建
+    is_tech = (current_user.role == ROLE_TECH_AGENT)
+
+    # 若更新了内容，执行版本自增与快照归档
     if payload.content is not None and payload.content != doc.content:
-        # 1. 查询当前文档已归档的最大版本号，确保严格单调递增，杜绝版本号冲突
         max_ver_stmt = select(func.max(DocumentVersion.version)).where(DocumentVersion.doc_id == doc.id)
         max_v = (await db.execute(max_ver_stmt)).scalar()
         if max_v is None or max_v < 1:
             max_v = doc.version or 1
-            # 兼容：若之前没有归档初始版本，先归档当前原始内容作为快照
             init_v = DocumentVersion(
                 doc_id=doc.id,
                 version=max_v,
@@ -330,77 +361,119 @@ async def update_document(
             )
             db.add(init_v)
 
-        # 2. 递增当前主版本号并更新正文
         next_version = max(max_v, doc.version) + 1
         doc.version = next_version
         doc.content = payload.content
         doc.file_size = len(payload.content.encode("utf-8"))
-        if payload.updated_by:
-            doc.updated_by = payload.updated_by
+        doc.updated_by = current_user.username or payload.updated_by or "system"
 
-        # 3. 归档新版本的完整独立快照
+        # 若为技术客服编辑，置为待审核状态
+        if is_tech:
+            doc.status = "PENDING_REVIEW"
+
         new_version_snapshot = DocumentVersion(
             doc_id=doc.id,
             version=next_version,
             content=payload.content,
-            metadata_snapshot={"name": payload.name or doc.name, "doc_type": doc.doc_type, "priority": payload.priority or doc.priority},
-            created_by=payload.updated_by or doc.updated_by or "admin"
+            metadata_snapshot={
+                "name": payload.name or doc.name, 
+                "doc_type": doc.doc_type, 
+                "priority": payload.priority or doc.priority,
+                "status": doc.status
+            },
+            created_by=doc.updated_by
         )
         db.add(new_version_snapshot)
 
-        # 4. 统计旧切片数量以维护知识库统计计数
-        old_count_stmt = select(func.count(DocumentChunk.id)).where(DocumentChunk.doc_id == doc.id)
-        old_c_count = (await db.execute(old_count_stmt)).scalar() or 0
-
-        # 彻底删除旧切片并重建
-        old_chunks_del = delete(DocumentChunk).where(DocumentChunk.doc_id == doc.id)
-        await db.execute(old_chunks_del)
-
-        # 5. 根据类型重新生成切片
-        doc_info = {"id": doc.id, "name": payload.name or doc.name, "priority": payload.priority or doc.priority}
-        if doc.doc_type == "MD":
-            new_chunks = DocumentChunker.chunk_markdown(payload.content, doc_info)
-        elif doc.doc_type == "TXT":
-            new_chunks = DocumentChunker.chunk_txt(payload.content, doc_info)
-        else:
-            new_chunks = []
-
-        for nc in new_chunks:
-            emb = await model_service.get_embedding(nc.content)
-            chunk_model = DocumentChunk(
-                kb_id=doc.kb_id,
-                doc_id=doc.id,
-                chunk_index=nc.chunk_index,
-                content=nc.content,
-                embedding=emb,
-                heading_path=nc.heading_path,
-                priority=doc.priority,
-                metadata_info=nc.metadata
-            )
-            db.add(chunk_model)
-
-        # 维护知识库切片统计
-        kb = await db.get(KnowledgeBase, doc.kb_id)
-        if kb:
-            kb.chunk_count = max(0, kb.chunk_count - old_c_count + len(new_chunks))
+        # 超级管理员编辑则立即更新切片；技术客服编辑则暂不切片，等待超管审核
+        if not is_tech and doc.status == "ACTIVE":
+            await index_document_chunks(doc, db)
 
     if payload.name is not None:
         doc.name = payload.name
     if payload.priority is not None:
         doc.priority = payload.priority
     if payload.updated_by is not None:
-        doc.updated_by = payload.updated_by
+        doc.updated_by = current_user.username or payload.updated_by
 
     await db.commit()
     await db.refresh(doc)
     return doc
+
+# ================= 知识文档审核流 (仅超级管理员可执行) =================
+
+@router.post(
+    "/{doc_id}/approve", 
+    summary="超级管理员审核通过知识文档 (触发自动切片与向量入库生效)",
+    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+)
+async def approve_document(
+    doc_id: str, 
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    doc = await db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    doc.status = "ACTIVE"
+    doc.updated_by = current_user.username or "admin"
+
+    # 执行切片与向量构建
+    chunk_count = await index_document_chunks(doc, db)
+
+    await db.commit()
+    await db.refresh(doc)
+    return {
+        "message": f"文档【{doc.name}】已审核通过并成功生效！已自动构建 {chunk_count} 个切片向量",
+        "doc_id": doc.id,
+        "status": "ACTIVE",
+        "chunk_count": chunk_count
+    }
+
+@router.post(
+    "/{doc_id}/reject", 
+    summary="超级管理员驳回知识文档",
+    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+)
+async def reject_document(
+    doc_id: str, 
+    reason: Optional[str] = Query("内容未达标", description="驳回理由"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    doc = await db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    doc.status = "REJECTED"
+    doc.updated_by = f"admin(已驳回: {reason})"
+
+    # 清除切片（如果有）
+    await db.execute(delete(DocumentChunk).where(DocumentChunk.doc_id == doc.id))
+    
+    # 维护知识库统计
+    kb = await db.get(KnowledgeBase, doc.kb_id)
+    if kb:
+        c_count_stmt = select(func.count(DocumentChunk.id)).where(DocumentChunk.kb_id == kb.id)
+        kb.chunk_count = (await db.execute(c_count_stmt)).scalar() or 0
+        doc_count_stmt = select(func.count(Document.id)).where(Document.kb_id == kb.id, Document.status == "ACTIVE")
+        kb.doc_count = (await db.execute(doc_count_stmt)).scalar() or 0
+
+    await db.commit()
+    await db.refresh(doc)
+    return {
+        "message": f"文档【{doc.name}】已被驳回",
+        "doc_id": doc.id,
+        "status": "REJECTED",
+        "reason": reason
+    }
 
 @router.get("/{doc_id}/versions", response_model=List[DocumentVersionResponse], summary="查询文档所有历史版本")
 async def list_document_versions(doc_id: str, db: AsyncSession = Depends(get_db)):
     stmt = select(DocumentVersion).where(DocumentVersion.doc_id == doc_id).order_by(DocumentVersion.version.desc(), DocumentVersion.created_at.desc())
     res = await db.execute(stmt)
     versions = res.scalars().all()
-    # 内存去重，确保每个版本号只返回最新一条
     seen = set()
     unique_versions = []
     for v in versions:
@@ -409,11 +482,12 @@ async def list_document_versions(doc_id: str, db: AsyncSession = Depends(get_db)
             unique_versions.append(v)
     return unique_versions
 
-@router.post("/{doc_id}/rollback", summary="版本回滚（恢复指定历史版本并重新切片）")
+@router.post("/{doc_id}/rollback", summary="版本回滚（恢复指定历史版本）")
 async def rollback_document_version(
     doc_id: str, 
     target_version: int = Query(..., description="目标恢复版本号"),
     updated_by: Optional[str] = Query("admin", description="操作人"),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     doc = await db.get(Document, doc_id)
@@ -429,10 +503,10 @@ async def rollback_document_version(
     if not ver_snapshot:
         raise HTTPException(status_code=404, detail="指定的历史版本快照未找到")
 
-    # 执行回滚：恢复历史版本内容并记录回滚人
     return await update_document(
         doc_id=doc_id,
         payload=DocumentUpdate(content=ver_snapshot.content, updated_by=updated_by),
+        current_user=current_user,
         db=db
     )
 
@@ -443,16 +517,14 @@ async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="文档不存在")
 
     kb = await db.get(KnowledgeBase, doc.kb_id)
-    
-    # 统计待删除切片数量以维护知识库统计计数
-    chunk_count_stmt = select(func.count(DocumentChunk.id)).where(DocumentChunk.doc_id == doc.id)
-    c_count = (await db.execute(chunk_count_stmt)).scalar() or 0
-
     await db.delete(doc)
 
     if kb:
-        kb.doc_count = max(0, kb.doc_count - 1)
-        kb.chunk_count = max(0, kb.chunk_count - c_count)
+        await db.flush()
+        c_count_stmt = select(func.count(DocumentChunk.id)).where(DocumentChunk.kb_id == kb.id)
+        kb.chunk_count = (await db.execute(c_count_stmt)).scalar() or 0
+        doc_count_stmt = select(func.count(Document.id)).where(Document.kb_id == kb.id, Document.status == "ACTIVE")
+        kb.doc_count = (await db.execute(doc_count_stmt)).scalar() or 0
 
     await db.commit()
     return {"message": "文档及切片数据已成功级联删除", "doc_id": doc_id}

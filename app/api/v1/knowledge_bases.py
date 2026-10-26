@@ -10,14 +10,30 @@ from app.models.chunk import DocumentChunk
 from app.schemas.knowledge_base import KBCreate, KBUpdate, KBResponse
 from app.core.auth import require_roles, ROLE_ADMIN, ROLE_TECH_AGENT
 
-# 知识库管理模块：仅对超级管理员开放 (RBAC权限隔离)
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, delete
+
+from app.db.session import get_db
+from app.models.knowledge_base import KnowledgeBase
+from app.models.document import Document
+from app.models.chunk import DocumentChunk
+from app.schemas.knowledge_base import KBCreate, KBUpdate, KBResponse
+from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT
+
+# 知识库管理模块：查询对管理员和技术客服开放（按产品权限隔离），增删改仅对超级管理员开放
 router = APIRouter(
     prefix="/kbs", 
-    tags=["知识库管理"],
-    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+    tags=["知识库管理"]
 )
 
-@router.post("", response_model=KBResponse, summary="创建不同产品对应的知识库")
+@router.post(
+    "", 
+    response_model=KBResponse, 
+    summary="创建不同产品对应的知识库",
+    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+)
 async def create_knowledge_base(payload: KBCreate, db: AsyncSession = Depends(get_db)):
     # 检查同产品下知识库名称是否重名
     stmt = select(KnowledgeBase).where(
@@ -41,25 +57,43 @@ async def create_knowledge_base(payload: KBCreate, db: AsyncSession = Depends(ge
     await db.refresh(kb)
     return kb
 
-@router.get("", response_model=List[KBResponse], summary="查询知识库列表")
+@router.get("", response_model=List[KBResponse], summary="查询知识库列表 (技术客服只能查看所属产品知识库)")
 async def list_knowledge_bases(
     product_code: Optional[str] = Query(None, description="按产品编码过滤"),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(KnowledgeBase)
-    if product_code:
+    
+    # 权限与数据隔离：如果是技术客服，只能看归属于自己产品的知识库
+    if current_user.role == ROLE_TECH_AGENT:
+        allowed_product = current_user.product_code or "SAAS_CLOUD"
+        stmt = stmt.where(KnowledgeBase.product_code == allowed_product)
+    elif product_code:
         stmt = stmt.where(KnowledgeBase.product_code == product_code)
+
     stmt = stmt.order_by(KnowledgeBase.created_at.desc())
     res = await db.execute(stmt)
     return res.scalars().all()
 
 @router.get("/{kb_id}", response_model=KBResponse, summary="获取知识库详情")
-async def get_knowledge_base(kb_id: str, db: AsyncSession = Depends(get_db)):
+async def get_knowledge_base(
+    kb_id: str, 
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     stmt = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
     res = await db.execute(stmt)
     kb = res.scalars().first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
+    
+    # 技术客服跨产品线越权访问校验
+    if current_user.role == ROLE_TECH_AGENT:
+        allowed_product = current_user.product_code or "SAAS_CLOUD"
+        if kb.product_code != allowed_product:
+            raise HTTPException(status_code=403, detail="权限不足：您无权查阅非本产品归属的知识库")
+
     return kb
 
 @router.put(

@@ -48,6 +48,7 @@ class ChatSessionCreate(BaseModel):
     customer_id: str
     customer_name: str
     product_code: str = "SAAS_CLOUD"
+    force_new: bool = False
 
 class ChatSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

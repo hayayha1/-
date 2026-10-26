@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional
-from app.core.auth import ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_USER
+from app.core.auth import ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_USER, AGENT_PRODUCT_MAP
 
 router = APIRouter(prefix="/auth", tags=["用户认证与角色鉴权"])
 
@@ -15,6 +15,7 @@ class LoginResponse(BaseModel):
     role: str
     display_name: str
     token: str
+    product_code: Optional[str] = None
 
 # 预置账号字典
 PRESET_USERS = {
@@ -22,25 +23,36 @@ PRESET_USERS = {
         "passwords": ["admin123", "123456", "admin"],
         "role": ROLE_ADMIN,
         "display_name": "系统超级管理员",
-        "user_id": "admin_master"
+        "user_id": "admin_master",
+        "product_code": None
     },
     "tech": {
         "passwords": ["tech123", "123456", "tech"],
         "role": ROLE_TECH_AGENT,
-        "display_name": "技术客服专员(工号#1028)",
-        "user_id": "agent_1028"
+        "display_name": "SaaS云平台技术客服(工号#1028)",
+        "user_id": "agent_1028",
+        "product_code": "SAAS_CLOUD"
     },
     "agent": {
         "passwords": ["agent123", "123456", "agent"],
         "role": ROLE_TECH_AGENT,
-        "display_name": "技术客服专员(工号#1028)",
-        "user_id": "agent_1028"
+        "display_name": "SaaS云平台技术客服(工号#1028)",
+        "user_id": "agent_1028",
+        "product_code": "SAAS_CLOUD"
+    },
+    "agent_1029": {
+        "passwords": ["agent123", "123456", "agent"],
+        "role": ROLE_TECH_AGENT,
+        "display_name": "电商系统技术客服(工号#1029)",
+        "user_id": "agent_1029",
+        "product_code": "E_COMMERCE"
     },
     "user": {
         "passwords": ["user123", "123456", "user"],
         "role": ROLE_USER,
         "display_name": "普通客户·001",
-        "user_id": "user_001"
+        "user_id": "user_001",
+        "product_code": None
     }
 }
 
@@ -57,7 +69,8 @@ async def login(payload: LoginRequest):
                 username=u,
                 role=conf["role"],
                 display_name=conf["display_name"],
-                token=f"token_{u}_{conf['role']}"
+                token=f"token_{u}_{conf['role']}",
+                product_code=conf.get("product_code")
             )
         else:
             raise HTTPException(
@@ -66,13 +79,15 @@ async def login(payload: LoginRequest):
             )
 
     # 动态匹配：若账号包含 admin，视为管理员；tech/agent 视为技术客服；其余视为客户
+    product_code = None
     if "admin" in u:
         role = ROLE_ADMIN
         display_name = f"管理员 · {u}"
         default_pwd = "admin123"
     elif "tech" in u or "agent" in u:
         role = ROLE_TECH_AGENT
-        display_name = f"技术客服 · {u}"
+        product_code = AGENT_PRODUCT_MAP.get(u, "SAAS_CLOUD")
+        display_name = f"技术客服 · {u} ({product_code})"
         default_pwd = "tech123"
     else:
         role = ROLE_USER
@@ -86,7 +101,8 @@ async def login(payload: LoginRequest):
             username=u,
             role=role,
             display_name=display_name,
-            token=f"token_{u}_{role}"
+            token=f"token_{u}_{role}",
+            product_code=product_code
         )
 
     raise HTTPException(
