@@ -1,0 +1,152 @@
+{
+  "total_questions": 50,
+  "strategy_1_hard_match": {
+    "strategy_name": "硬命中 (Metadata Match)",
+    "definition": "判定检索出的 Chunk 元数据（doc_name 与 section_title）与 test_dataset.json 中的 source_doc 和 source_section 是否精确对应",
+    "hit_rate_at_1": 72.0,
+    "hit_rate_at_3": 90.0,
+    "hit_rate_at_5": 96.0,
+    "precision_at_3": 35.33,
+    "mrr_at_3": 0.8067,
+    "mrr_at_5": 0.8207,
+    "hits_at_1_count": 36,
+    "hits_at_3_count": 45,
+    "hits_at_5_count": 48
+  },
+  "strategy_2_soft_match": {
+    "strategy_name": "软命中 (Key Facts Coverage)",
+    "definition": "若检索到的 Chunk 虽然章节层级有轻微偏移，但其内容完整包含了 test_dataset.json 中的 key_facts（核心判定词、金额公式、保底门槛等）",
+    "hit_rate_at_1": 54.0,
+    "hit_rate_at_3": 56.0,
+    "hit_rate_at_5": 56.0,
+    "precision_at_3": 24.0,
+    "mrr_at_3": 0.55,
+    "mrr_at_5": 0.55,
+    "hits_at_1_count": 27,
+    "hits_at_3_count": 28,
+    "hits_at_5_count": 28
+  },
+  "strategy_3_combined_match": {
+    "strategy_name": "联合命中 (Combined Match: Hard OR Soft)",
+    "definition": "任一切片满足硬命中元数据匹配或软命中关键事实覆盖即可判定为命中",
+    "hit_rate_at_1": 76.0,
+    "hit_rate_at_3": 90.0,
+    "hit_rate_at_5": 96.0,
+    "precision_at_3": 38.67,
+    "mrr_at_3": 0.8267,
+    "mrr_at_5": 0.8407,
+    "hits_at_1_count": 38,
+    "hits_at_3_count": 45,
+    "hits_at_5_count": 48
+  },
+  "category_breakdown": {
+    "售后退换": {
+      "question_count": 14,
+      "hard_hit_rate_at_3": 85.71,
+      "hard_precision_at_3": 28.57,
+      "hard_mrr": 0.7857,
+      "soft_hit_rate_at_3": 57.14,
+      "soft_precision_at_3": 19.05,
+      "soft_mrr": 0.5714,
+      "combined_hit_rate_at_3": 85.71,
+      "combined_precision_at_3": 28.57,
+      "combined_mrr": 0.7857
+    },
+    "物流发货": {
+      "question_count": 7,
+      "hard_hit_rate_at_3": 85.71,
+      "hard_precision_at_3": 47.62,
+      "hard_mrr": 0.75,
+      "soft_hit_rate_at_3": 42.86,
+      "soft_precision_at_3": 28.57,
+      "soft_mrr": 0.4286,
+      "combined_hit_rate_at_3": 85.71,
+      "combined_precision_at_3": 52.38,
+      "combined_mrr": 0.8214
+    },
+    "促销价保": {
+      "question_count": 4,
+      "hard_hit_rate_at_3": 100.0,
+      "hard_precision_at_3": 33.33,
+      "hard_mrr": 0.875,
+      "soft_hit_rate_at_3": 75.0,
+      "soft_precision_at_3": 25.0,
+      "soft_mrr": 0.625,
+      "combined_hit_rate_at_3": 100.0,
+      "combined_precision_at_3": 33.33,
+      "combined_mrr": 0.875
+    },
+    "三包质保": {
+      "question_count": 10,
+      "hard_hit_rate_at_3": 80.0,
+      "hard_precision_at_3": 30.0,
+      "hard_mrr": 0.7283,
+      "soft_hit_rate_at_3": 60.0,
+      "soft_precision_at_3": 30.0,
+      "soft_mrr": 0.6,
+      "combined_hit_rate_at_3": 80.0,
+      "combined_precision_at_3": 36.67,
+      "combined_mrr": 0.7283
+    },
+    "订单支付": {
+      "question_count": 4,
+      "hard_hit_rate_at_3": 100.0,
+      "hard_precision_at_3": 33.33,
+      "hard_mrr": 0.875,
+      "soft_hit_rate_at_3": 50.0,
+      "soft_precision_at_3": 16.67,
+      "soft_mrr": 0.5,
+      "combined_hit_rate_at_3": 100.0,
+      "combined_precision_at_3": 33.33,
+      "combined_mrr": 0.875
+    },
+    "订单发票": {
+      "question_count": 5,
+      "hard_hit_rate_at_3": 100.0,
+      "hard_precision_at_3": 33.33,
+      "hard_mrr": 1.0,
+      "soft_hit_rate_at_3": 40.0,
+      "soft_precision_at_3": 13.33,
+      "soft_mrr": 0.4,
+      "combined_hit_rate_at_3": 100.0,
+      "combined_precision_at_3": 33.33,
+      "combined_mrr": 1.0
+    },
+    "促销优惠": {
+      "question_count": 3,
+      "hard_hit_rate_at_3": 100.0,
+      "hard_precision_at_3": 55.56,
+      "hard_mrr": 1.0,
+      "soft_hit_rate_at_3": 66.67,
+      "soft_precision_at_3": 22.22,
+      "soft_mrr": 0.6667,
+      "combined_hit_rate_at_3": 100.0,
+      "combined_precision_at_3": 55.56,
+      "combined_mrr": 1.0
+    },
+    "物流售后": {
+      "question_count": 2,
+      "hard_hit_rate_at_3": 100.0,
+      "hard_precision_at_3": 33.33,
+      "hard_mrr": 0.75,
+      "soft_hit_rate_at_3": 100.0,
+      "soft_precision_at_3": 66.67,
+      "soft_mrr": 1.0,
+      "combined_hit_rate_at_3": 100.0,
+      "combined_precision_at_3": 66.67,
+      "combined_mrr": 1.0
+    },
+    "账号安全": {
+      "question_count": 1,
+      "hard_hit_rate_at_3": 100.0,
+      "hard_precision_at_3": 66.67,
+      "hard_mrr": 1.0,
+      "soft_hit_rate_at_3": 0.0,
+      "soft_precision_at_3": 0.0,
+      "soft_mrr": 0.0,
+      "combined_hit_rate_at_3": 100.0,
+      "combined_precision_at_3": 66.67,
+      "combined_mrr": 1.0
+    }
+  }
+}
