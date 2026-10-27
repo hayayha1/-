@@ -214,6 +214,7 @@ async def submit_user_feedback(
 
         case_obj = BadCase(
             id=str(uuid.uuid4()),
+            tenant_id=session.tenant_id if session and session.tenant_id else (current_user.tenant_id or "tenant_default"),
             product_code=product_code,
             kb_id=kb_id,
             session_id=payload.session_id,
@@ -278,6 +279,7 @@ async def submit_agent_label(
 
     case_obj = BadCase(
         id=str(uuid.uuid4()),
+        tenant_id=session.tenant_id if session and session.tenant_id else (current_user.tenant_id or "tenant_default"),
         product_code=product_code,
         kb_id=kb_id,
         session_id=payload.session_id,
@@ -326,6 +328,8 @@ async def list_all_badcases(
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(BadCase)
+    target_tenant = current_user.tenant_id or "tenant_default"
+    stmt = stmt.where(BadCase.tenant_id == target_tenant)
     
     if current_user.role == ROLE_OPERATOR:
         assigned_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
@@ -571,6 +575,8 @@ async def list_clusters(
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(BadCaseCluster)
+    target_tenant = current_user.tenant_id or "tenant_default"
+    stmt = stmt.where(BadCaseCluster.tenant_id == target_tenant)
 
     if current_user.role == ROLE_OPERATOR:
         assigned_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"

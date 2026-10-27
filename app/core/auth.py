@@ -43,19 +43,27 @@ class CurrentUser(BaseModel):
     user_id: str
     username: str
     role: str
+    tenant_id: str = "tenant_default"
+    is_platform_admin: bool = False
     product_code: Optional[str] = None
     assigned_kb_id: Optional[str] = None
 
 async def get_current_user(
     x_user_role: Optional[str] = Header(default=None, description="当前用户角色: user, tech_agent, admin, operator"),
+    x_role: Optional[str] = Header(default=None, description="角色别名请求头"),
     x_user_id: Optional[str] = Header(default=None, description="当前用户ID"),
     x_user_product: Optional[str] = Header(default=None, description="所属产品线编码"),
-    x_user_kb_id: Optional[str] = Header(default=None, description="归属知识库ID")
+    x_user_kb_id: Optional[str] = Header(default=None, description="归属知识库ID"),
+    x_tenant_id: Optional[str] = Header(default=None, description="归属企业租户ID")
 ) -> CurrentUser:
     """从请求头提取当前用户上下文，未传递请求头时默认为 user 普通客户"""
-    role = x_user_role.strip().lower() if x_user_role else ROLE_USER
+    raw_role = x_user_role or x_role
+    role = raw_role.strip().lower() if raw_role else ROLE_USER
     if role not in ALL_ROLES:
         role = ROLE_USER
+    
+    tenant_id = (x_tenant_id or "tenant_default").strip()
+    is_platform_admin = (role == ROLE_ADMIN)
     
     default_ids = {
         ROLE_USER: "user_001",
@@ -89,6 +97,8 @@ async def get_current_user(
         user_id=user_id,
         username=name_map.get(role, "未知用户"),
         role=role,
+        tenant_id=tenant_id,
+        is_platform_admin=is_platform_admin,
         product_code=product_code,
         assigned_kb_id=assigned_kb_id
     )
@@ -96,9 +106,11 @@ async def get_current_user(
 def require_roles(allowed_roles: List[str]):
     """角色权限拦截器 Dependency"""
     async def role_checker(
-        x_user_role: Optional[str] = Header(default=ROLE_ADMIN)
+        x_user_role: Optional[str] = Header(default=None),
+        x_role: Optional[str] = Header(default=None)
     ):
-        current_role = x_user_role.strip().lower() if x_user_role else ROLE_ADMIN
+        raw_role = x_user_role or x_role
+        current_role = raw_role.strip().lower() if raw_role else ROLE_ADMIN
         if current_role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

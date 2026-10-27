@@ -23,6 +23,9 @@ class LoginResponse(BaseModel):
     role: str
     display_name: str
     token: str
+    tenant_id: str = "tenant_default"
+    tenant_name: str = "云创智能科技"
+    is_platform_admin: bool = False
     product_code: Optional[str] = None
     assigned_kb_id: Optional[str] = None
 
@@ -118,12 +121,18 @@ async def login(payload: LoginRequest):
     if u in PRESET_USERS:
         conf = PRESET_USERS[u]
         if p in conf["passwords"]:
+            tenant_id = conf.get("tenant_id", "tenant_default")
+            is_platform_admin = (conf["role"] == ROLE_ADMIN)
+            tenant_name = "平台全局管理" if is_platform_admin else ("极速零售集团" if tenant_id == "tenant_retail_a" else "云创智能科技")
             return LoginResponse(
                 user_id=conf["user_id"],
                 username=u,
                 role=conf["role"],
                 display_name=conf["display_name"],
                 token=f"token_{u}_{conf['role']}",
+                tenant_id=tenant_id,
+                tenant_name=tenant_name,
+                is_platform_admin=is_platform_admin,
                 product_code=conf.get("product_code"),
                 assigned_kb_id=conf.get("assigned_kb_id")
             )
@@ -158,12 +167,16 @@ async def login(payload: LoginRequest):
 
     # 简单允许匹配或者密码为 123456 / default_pwd
     if p in [default_pwd, "123456", u]:
+        is_platform_admin = (role == ROLE_ADMIN)
         return LoginResponse(
             user_id=u,
             username=u,
             role=role,
             display_name=display_name,
             token=f"token_{u}_{role}",
+            tenant_id="tenant_default",
+            tenant_name="平台全局管理" if is_platform_admin else "云创智能科技",
+            is_platform_admin=is_platform_admin,
             product_code=product_code,
             assigned_kb_id=assigned_kb_id
         )

@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional
-from sqlalchemy import String, Integer, BigInteger, ForeignKey, Text
+from sqlalchemy import String, Integer, BigInteger, ForeignKey, Text, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin
 
@@ -23,6 +23,9 @@ class Document(Base, TimestampMixin):
     priority: Mapped[int] = mapped_column(Integer, default=1, index=True, nullable=False, comment="知识优先级 1-5")
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False, comment="当前版本号")
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE", nullable=False, comment="状态: INDEXING, ACTIVE, FAILED")
+    source_origin: Mapped[str] = mapped_column(String(32), default="MANUAL_UPLOAD", nullable=False, comment="来源: MANUAL_UPLOAD, SYNC_ENGINE")
+    source_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, comment="关联外部数据源ID")
+    is_external_controlled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否受外部源完全托管")
 
     created_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False, comment="创建人")
     updated_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False, comment="更新人")

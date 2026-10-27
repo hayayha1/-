@@ -9,6 +9,7 @@ class KnowledgeBase(Base, TimestampMixin):
     __tablename__ = "knowledge_bases"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(64), default="tenant_default", index=True, nullable=False, comment="归属企业租户ID")
     product_code: Mapped[str] = mapped_column(String(64), index=True, nullable=False, comment="归属产品编码")
     name: Mapped[str] = mapped_column(String(128), nullable=False, comment="知识库名称")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="知识库描述")
@@ -42,6 +43,12 @@ class KnowledgeBase(Base, TimestampMixin):
     )
     chunks: Mapped[List["DocumentChunk"]] = relationship(
         "DocumentChunk",
+        back_populates="knowledge_base",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+    sources: Mapped[List["KnowledgeSource"]] = relationship(
+        "KnowledgeSource",
         back_populates="knowledge_base",
         cascade="all, delete-orphan",
         passive_deletes=True

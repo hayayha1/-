@@ -10,6 +10,7 @@ class BadCase(Base):
     __tablename__ = "bad_cases"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(64), default="tenant_default", index=True, nullable=False, comment="归属企业租户ID")
     product_code: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="SAAS_CLOUD", comment="归属产品线")
     kb_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False, comment="归属知识库ID")
     session_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False, comment="关联会话ID")
@@ -69,6 +70,7 @@ class BadCaseCluster(Base, TimestampMixin):
     __tablename__ = "bad_case_clusters"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(64), default="tenant_default", index=True, nullable=False, comment="归属企业租户ID")
     product_code: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="SAAS_CLOUD", comment="归属产品线")
     kb_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False, comment="归属知识库ID")
     

@@ -34,6 +34,7 @@ class KBResponse(BaseModel):
     doc_count: int
     chunk_count: int
     config: Dict[str, Any]
+    tenant_id: Optional[str] = "tenant_default"
     created_by: str
     updated_by: str
     created_at: datetime

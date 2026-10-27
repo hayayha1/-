@@ -51,6 +51,9 @@ class DocumentResponse(BaseModel):
     priority: int
     version: int
     status: str
+    source_origin: Optional[str] = "MANUAL_UPLOAD"
+    source_id: Optional[str] = None
+    is_external_controlled: Optional[bool] = False
     created_by: str
     updated_by: str
     created_at: datetime

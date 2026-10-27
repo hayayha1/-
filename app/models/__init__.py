@@ -1,4 +1,5 @@
 from app.models.base import Base, TimestampMixin
+from app.models.tenant import Tenant
 from app.models.knowledge_base import KnowledgeBase
 from app.models.document import Document
 from app.models.document_version import DocumentVersion
@@ -14,9 +15,17 @@ from app.models.bad_case import (
     ROOT_CAUSE_DICT
 )
 
+from app.models.knowledge_source import (
+    KnowledgeSource,
+    DocumentSourceMapping,
+    SyncJob,
+    SyncJobItem
+)
+
 __all__ = [
     "Base",
     "TimestampMixin",
+    "Tenant",
     "KnowledgeBase",
     "Document",
     "DocumentVersion",
@@ -29,5 +38,9 @@ __all__ = [
     "BadCaseValidation",
     "BadCaseThresholdConfig",
     "ThresholdAuditLog",
-    "ROOT_CAUSE_DICT"
+    "ROOT_CAUSE_DICT",
+    "KnowledgeSource",
+    "DocumentSourceMapping",
+    "SyncJob",
+    "SyncJobItem"
 ]

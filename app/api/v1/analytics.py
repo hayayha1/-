@@ -47,7 +47,9 @@ async def get_analytics_overview(
         if kb and kb.product_code:
             session_filters.append(ChatSession.product_code == kb.product_code)
 
-    # 查所有会话（当前周期与全量）
+    # 查所有会话（当前周期与全量，租户隔离）
+    target_tenant = current_user.tenant_id or "tenant_default"
+    session_filters.append(ChatSession.tenant_id == target_tenant)
     sessions_stmt = select(ChatSession)
     if session_filters:
         sessions_stmt = sessions_stmt.where(and_(*session_filters))
@@ -61,8 +63,8 @@ async def get_analytics_overview(
     ]
     escalate_count = len(escalated_sessions)
 
-    # 3. 差评与 BadCase 统计
-    bc_stmt = select(BadCase)
+    # 3. 差评与 BadCase 统计（租户隔离）
+    bc_stmt = select(BadCase).where(BadCase.tenant_id == target_tenant)
     if kb_id and kb_id != "ALL":
         bc_stmt = bc_stmt.where(BadCase.kb_id == kb_id)
     bc_res = await db.execute(bc_stmt)

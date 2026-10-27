@@ -272,9 +272,7 @@ async def batch_import_faq(
     )
     db.add(initial_version)
 
-    chunk_count = 0
-    if doc_status == "ACTIVE":
-        chunk_count = await index_document_chunks(doc, db)
+    chunk_count = await index_document_chunks(doc, db)
 
     await db.commit()
     return {
@@ -406,7 +404,7 @@ async def update_document(
         doc.version = next_version
         doc.content = payload.content
         doc.file_size = len(payload.content.encode("utf-8"))
-        doc.updated_by = current_user.username or payload.updated_by or "system"
+        doc.updated_by = payload.updated_by or current_user.username or "system"
 
         # 若为技术客服编辑，置为待审核状态
         if is_tech:
@@ -435,7 +433,7 @@ async def update_document(
     if payload.priority is not None:
         doc.priority = payload.priority
     if payload.updated_by is not None:
-        doc.updated_by = current_user.username or payload.updated_by
+        doc.updated_by = payload.updated_by or current_user.username
 
     await db.commit()
     await db.refresh(doc)

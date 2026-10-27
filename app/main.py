@@ -24,6 +24,172 @@ logger = logging.getLogger(__name__)
 async def seed_demo_data():
     """预填充演示知识库与知识数据"""
     async with async_session_maker() as db:
+        # 0. 确保多租户种子数据初始化
+        from app.models.tenant import Tenant
+        t_res = await db.execute(select(Tenant).limit(1))
+        if not t_res.scalars().first():
+            t1 = Tenant(
+                tenant_code="tenant_default",
+                name="云创智能科技有限公司",
+                status="ACTIVE",
+                tier="ENTERPRISE",
+                contact_name="云创超管",
+                contact_phone="400-888-9999",
+                contact_email="admin@yunchuang.ai",
+                max_seats=30,
+                max_kbs=15,
+                monthly_token_quota=5000000,
+                used_tokens=142600,
+                monthly_query_quota=100000,
+                used_queries=3280,
+                brand_config={
+                    "brand_name": "云创企业智能客服平台",
+                    "bot_name": "小创助理",
+                    "bot_avatar": "🤖",
+                    "welcome_message": "您好！我是云创专属智能客服助手，已接入当前企业产品知识库，很高兴为您服务！",
+                    "primary_color": "#4F46E5",
+                    "theme": "indigo"
+                }
+            )
+            t2 = Tenant(
+                tenant_code="tenant_retail_a",
+                name="极速新零售集团",
+                status="ACTIVE",
+                tier="PROFESSIONAL",
+                contact_name="林经理",
+                contact_phone="139-1122-3344",
+                contact_email="lin@speedretail.cn",
+                max_seats=10,
+                max_kbs=5,
+                monthly_token_quota=2000000,
+                used_tokens=560000,
+                monthly_query_quota=30000,
+                used_queries=8920,
+                brand_config={
+                    "brand_name": "极速新零售智能客服",
+                    "bot_name": "极小速",
+                    "bot_avatar": "🛍️",
+                    "welcome_message": "极速新零售为您守候！门店自提、生鲜冷链及会员专属售后极速为您响应！",
+                    "primary_color": "#10B981",
+                    "theme": "emerald"
+                }
+            )
+            t3 = Tenant(
+                tenant_code="tenant_fin_b",
+                name="恒信智投科技",
+                status="TRIAL",
+                tier="STARTER",
+                contact_name="陈总监",
+                contact_phone="137-8899-0011",
+                contact_email="chen@hengxinto.com",
+                max_seats=3,
+                max_kbs=2,
+                monthly_token_quota=500000,
+                used_tokens=85000,
+                monthly_query_quota=5000,
+                used_queries=1120,
+                brand_config={
+                    "brand_name": "恒信智投尊享客服",
+                    "bot_name": "恒小智",
+                    "bot_avatar": "💼",
+                    "welcome_message": "尊敬的恒信量化客户，我是您的资产与量化策略答疑助手！",
+                    "primary_color": "#F59E0B",
+                    "theme": "amber"
+                }
+            )
+            db.add_all([t1, t2, t3])
+            await db.commit()
+
+        # 0.1 确保极速新零售集团有演示隔离知识库
+        retail_kb_res = await db.execute(select(KnowledgeBase).where(KnowledgeBase.tenant_id == "tenant_retail_a"))
+        if not retail_kb_res.scalars().first():
+            retail_kb = KnowledgeBase(
+                product_code="RETAIL_FAST",
+                name="极速新零售会员与物流售后知识库",
+                description="面向新零售集团全域门店自提、会员积分权益及生鲜极速退款规程。",
+                status="ACTIVE",
+                tenant_id="tenant_retail_a",
+                doc_count=1,
+                chunk_count=2,
+                config={
+                    "bm25_top_k": 10,
+                    "vector_top_k": 10,
+                    "rerank_top_k": 3,
+                    "threshold_direct": 0.80,
+                    "threshold_clarify": 0.50
+                },
+                created_by="retail_admin",
+                updated_by="retail_admin"
+            )
+            db.add(retail_kb)
+            await db.flush()
+
+            retail_content = """# 极速新零售门店自提与生鲜售后规范
+
+## 一、门店极速自提规则
+用户在极速小程序下单选择【门店自提】后，系统在 15 分钟内完成拣货并下发 6 位提货码。用户凭提货码或小程序会员二维码至选定门店服务台扫码提货即可。
+
+## 二、生鲜冷链售后退款保障
+生鲜果蔬及冷链食品如出现破损、变质，支持收货后 24 小时内拍照在线申请【极速无忧退款】，款项将在 10 分钟内原路原额返还至支付账户。"""
+
+            doc_r = Document(
+                kb_id=retail_kb.id,
+                name="极速新零售门店自提与生鲜售后保障规范.md",
+                doc_type="MD",
+                content=retail_content,
+                file_size=len(retail_content.encode("utf-8")),
+                priority=3,
+                version=1,
+                status="ACTIVE",
+                created_by="retail_admin",
+                updated_by="retail_admin"
+            )
+            db.add(doc_r)
+            await db.flush()
+
+            chunks = DocumentChunker.chunk_markdown(retail_content, {"id": doc_r.id, "name": doc_r.name, "priority": 3})
+            for c in chunks:
+                emb = await model_service.get_embedding(c.content)
+                db.add(DocumentChunk(
+                    kb_id=retail_kb.id,
+                    doc_id=doc_r.id,
+                    chunk_index=c.chunk_index,
+                    content=c.content,
+                    embedding=emb,
+                    heading_path=c.heading_path,
+                    priority=3,
+                    metadata_info=c.metadata
+                ))
+
+            from app.models.chat_session import ChatSession, ChatMessage
+            import datetime
+            retail_session = ChatSession(
+                customer_id="retail_vip_001",
+                customer_name="周女士 · 极速金牌会员",
+                product_code="RETAIL_FAST",
+                status="AI_SERVICE",
+                tenant_id="tenant_retail_a",
+                last_message="门店自提需要携带什么证件？",
+                last_message_at=datetime.datetime.now() - datetime.timedelta(minutes=8)
+            )
+            db.add(retail_session)
+            await db.flush()
+            db.add(ChatMessage(
+                session_id=retail_session.id,
+                role="user",
+                content="门店自提需要携带什么证件？",
+                raw_query="门店自提需要携带什么证件？"
+            ))
+            db.add(ChatMessage(
+                session_id=retail_session.id,
+                role="assistant",
+                content="周女士您好！在极速新零售下单后无需携带实体身份证件，凭小程序订单详情中的 6 位提货码或会员动态二维码，前往选定门店服务台扫码直接提货即可！",
+                reply_type="DIRECT_ANSWER",
+                confidence_score=0.92,
+                raw_query="门店自提需要携带什么证件？"
+            ))
+            await db.commit()
+
         res = await db.execute(select(KnowledgeBase).limit(1))
         existing_kb = res.scalars().first()
         if existing_kb:

@@ -32,13 +32,22 @@ async def init_db():
         
         await conn.run_sync(Base.metadata.create_all)
 
-        # 兼容性迁移：确保 documents 表包含 content 列
+        # 兼容性迁移：确保 documents 表包含 content 及知识源同步字段
         try:
             res = await conn.execute(text("PRAGMA table_info(documents);"))
             columns = [row[1] for row in res.fetchall()]
             if columns and "content" not in columns:
                 await conn.execute(text("ALTER TABLE documents ADD COLUMN content TEXT;"))
                 logger.info("Auto migrated: added column 'content' to table 'documents'.")
+            if columns and "source_origin" not in columns:
+                await conn.execute(text("ALTER TABLE documents ADD COLUMN source_origin VARCHAR(32) DEFAULT 'MANUAL_UPLOAD';"))
+                logger.info("Auto migrated: added column 'source_origin' to table 'documents'.")
+            if columns and "source_id" not in columns:
+                await conn.execute(text("ALTER TABLE documents ADD COLUMN source_id VARCHAR(36);"))
+                logger.info("Auto migrated: added column 'source_id' to table 'documents'.")
+            if columns and "is_external_controlled" not in columns:
+                await conn.execute(text("ALTER TABLE documents ADD COLUMN is_external_controlled BOOLEAN DEFAULT 0;"))
+                logger.info("Auto migrated: added column 'is_external_controlled' to table 'documents'.")
         except Exception:
             pass
 
@@ -76,6 +85,17 @@ async def init_db():
                         logger.info(f"Auto migrated: added column '{col_name}' to table 'bad_case_clusters'.")
         except Exception as e:
             logger.warning(f"bad_case_clusters migration skipped or failed: {e}")
+
+        # 兼容性迁移：确保多租户隔离字段 tenant_id 存在
+        for tbl in ["knowledge_bases", "chat_sessions", "bad_cases", "bad_case_clusters"]:
+            try:
+                res = await conn.execute(text(f"PRAGMA table_info({tbl});"))
+                tbl_cols = [row[1] for row in res.fetchall()]
+                if tbl_cols and "tenant_id" not in tbl_cols:
+                    await conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN tenant_id VARCHAR(64) DEFAULT 'tenant_default';"))
+                    logger.info(f"Auto migrated: added column 'tenant_id' to table '{tbl}'.")
+            except Exception as e:
+                logger.warning(f"tenant_id migration skipped for {tbl}: {e}")
 
         logger.info("All database tables created or confirmed.")
 

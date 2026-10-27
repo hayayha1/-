@@ -45,6 +45,8 @@ async def list_chat_sessions(
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(ChatSession)
+    target_tenant = current_user.tenant_id or "tenant_default"
+    stmt = stmt.where(ChatSession.tenant_id == target_tenant)
 
     # 普通客户行级隔离
     if current_user.role == ROLE_USER:
@@ -68,13 +70,19 @@ async def list_chat_sessions(
 
 # 2. 创建或获取客户会话 (普通用户重新登录/进入时传入 force_new=True 开启全新会话)
 @router.post("/sessions", response_model=ChatSessionResponse, summary="创建客户独立客服会话")
-async def create_chat_session(payload: ChatSessionCreate, db: AsyncSession = Depends(get_db)):
+async def create_chat_session(
+    payload: ChatSessionCreate, 
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    target_tenant = current_user.tenant_id or "tenant_default"
     if payload.force_new:
         # 将用户历史所有未结单会话标记为 CLOSED，确保开启纯净新会话
         close_old_stmt = (
             update(ChatSession)
             .where(
                 ChatSession.customer_id == payload.customer_id,
+                ChatSession.tenant_id == target_tenant,
                 ChatSession.status != "CLOSED"
             )
             .values(status="CLOSED")
@@ -86,6 +94,7 @@ async def create_chat_session(payload: ChatSessionCreate, db: AsyncSession = Dep
             customer_name=payload.customer_name,
             product_code=payload.product_code,
             status="AI_SERVICE",
+            tenant_id=target_tenant,
             last_message="新会话已开启",
             last_message_at=datetime.now()
         )
@@ -98,6 +107,7 @@ async def create_chat_session(payload: ChatSessionCreate, db: AsyncSession = Dep
     stmt = select(ChatSession).where(
         ChatSession.customer_id == payload.customer_id,
         ChatSession.product_code == payload.product_code,
+        ChatSession.tenant_id == target_tenant,
         ChatSession.status != "CLOSED"
     ).order_by(desc(ChatSession.last_message_at))
     res = await db.execute(stmt)
@@ -110,6 +120,7 @@ async def create_chat_session(payload: ChatSessionCreate, db: AsyncSession = Dep
         customer_name=payload.customer_name,
         product_code=payload.product_code,
         status="AI_SERVICE",
+        tenant_id=target_tenant,
         last_message="会话已建立",
         last_message_at=datetime.now()
     )
@@ -142,6 +153,15 @@ async def chat_interaction(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    target_tenant = current_user.tenant_id or "tenant_default"
+
+    # 4.0 租户状态检查与问答用量监控
+    from app.models.tenant import Tenant
+    t_stmt = select(Tenant).where(Tenant.tenant_code == target_tenant)
+    tenant_record = (await db.execute(t_stmt)).scalars().first()
+    if tenant_record and tenant_record.status == "SUSPENDED":
+        raise HTTPException(status_code=403, detail="当前企业租户服务已被暂停或欠费冻结，无法发起智能问答")
+
     # 4.1 确保会话存在
     session = None
     if payload.session_id:
@@ -150,6 +170,7 @@ async def chat_interaction(
         stmt = select(ChatSession).where(
             ChatSession.customer_id == payload.customer_id,
             ChatSession.product_code == payload.product_code,
+            ChatSession.tenant_id == target_tenant,
             ChatSession.status != "CLOSED"
         ).order_by(desc(ChatSession.last_message_at))
         res = await db.execute(stmt)
@@ -159,6 +180,7 @@ async def chat_interaction(
                 customer_id=payload.customer_id,
                 customer_name=f"客户 · {payload.customer_id}",
                 product_code=payload.product_code,
+                tenant_id=target_tenant,
                 status="AI_SERVICE",
                 last_message=payload.query[:30]
             )
@@ -223,10 +245,11 @@ async def chat_interaction(
             action_buttons=[ActionButton(action="FINISH_HUMAN", label="结束人工服务，返回智能助手")]
         )
 
-    # 4.5 查找指定或当前产品下的生效知识库
+    # 4.5 查找指定或当前产品下的生效知识库（租户隔离）
     kb_stmt = select(KnowledgeBase).where(
         KnowledgeBase.product_code == payload.product_code,
-        KnowledgeBase.status == "ACTIVE"
+        KnowledgeBase.status == "ACTIVE",
+        KnowledgeBase.tenant_id == target_tenant
     )
     if payload.kb_id:
         kb_stmt = kb_stmt.where(KnowledgeBase.id == payload.kb_id)
@@ -234,14 +257,17 @@ async def chat_interaction(
     kb_res = await db.execute(kb_stmt)
     kb = kb_res.scalars().first()
     if not kb:
-        # 兜底：如果没按产品找到，尝试获取任意一个启用的知识库
-        fallback_stmt = select(KnowledgeBase).where(KnowledgeBase.status == "ACTIVE")
+        # 兜底：如果没按产品找到，尝试获取当前租户下任意一个启用的知识库
+        fallback_stmt = select(KnowledgeBase).where(
+            KnowledgeBase.status == "ACTIVE",
+            KnowledgeBase.tenant_id == target_tenant
+        )
         kb = (await db.execute(fallback_stmt)).scalars().first()
 
     if not kb:
         raise HTTPException(
             status_code=404, 
-            detail=f"当前系统中未找到任何处于启用状态的知识库，请先由管理员创建并启用知识库"
+            detail=f"当前企业租户下未找到任何处于启用状态的知识库，请先由管理员创建并启用知识库"
         )
 
     # 4.6 LangGraph 编排驱动
@@ -337,6 +363,7 @@ async def chat_interaction(
 
         auto_case = BadCase(
             id=str(_uuid.uuid4()),
+            tenant_id=target_tenant,
             product_code=payload.product_code,
             kb_id=kb.id,
             session_id=session.id,
@@ -357,6 +384,12 @@ async def chat_interaction(
         auto_case.root_cause_reason = rc_reason
 
         db.add(auto_case)
+
+    # 累加企业租户调用量与 Token 消耗
+    if tenant_record:
+        tenant_record.used_queries += 1
+        approx_tokens = int((len(payload.query) + len(content)) * 1.5) + 120
+        tenant_record.used_tokens += approx_tokens
 
     # 更新会话最后消息
     session.last_message = payload.query

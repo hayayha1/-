@@ -10,6 +10,7 @@ class ChatSession(Base, TimestampMixin):
     __tablename__ = "chat_sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(64), default="tenant_default", index=True, nullable=False, comment="归属企业租户ID")
     customer_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False, comment="客户唯一标识")
     customer_name: Mapped[str] = mapped_column(String(128), nullable=False, default="访客客户", comment="客户姓名/昵称")
     product_code: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="SAAS_CLOUD", comment="归属产品线")
