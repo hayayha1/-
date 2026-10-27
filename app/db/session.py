@@ -40,10 +40,42 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE documents ADD COLUMN content TEXT;"))
                 logger.info("Auto migrated: added column 'content' to table 'documents'.")
         except Exception:
-            try:
-                await conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT;"))
-            except Exception:
-                pass
+            pass
+
+        # 兼容性迁移：确保 bad_cases 包含根因及解决时间字段
+        try:
+            res = await conn.execute(text("PRAGMA table_info(bad_cases);"))
+            bc_cols = [row[1] for row in res.fetchall()]
+            if bc_cols:
+                for col_name, col_type in [
+                    ("root_cause_code", "TEXT"),
+                    ("root_cause_name", "TEXT"),
+                    ("root_cause_reason", "TEXT"),
+                    ("resolved_doc_id", "TEXT"),
+                    ("resolved_at", "DATETIME")
+                ]:
+                    if col_name not in bc_cols:
+                        await conn.execute(text(f"ALTER TABLE bad_cases ADD COLUMN {col_name} {col_type};"))
+                        logger.info(f"Auto migrated: added column '{col_name}' to table 'bad_cases'.")
+        except Exception as e:
+            logger.warning(f"bad_cases migration skipped or failed: {e}")
+
+        # 兼容性迁移：确保 bad_case_clusters 包含根因及分布字段
+        try:
+            res = await conn.execute(text("PRAGMA table_info(bad_case_clusters);"))
+            bcc_cols = [row[1] for row in res.fetchall()]
+            if bcc_cols:
+                for col_name, col_type in [
+                    ("root_cause_code", "TEXT"),
+                    ("root_cause_name", "TEXT"),
+                    ("root_cause_description", "TEXT"),
+                    ("root_cause_distribution", "TEXT")
+                ]:
+                    if col_name not in bcc_cols:
+                        await conn.execute(text(f"ALTER TABLE bad_case_clusters ADD COLUMN {col_name} {col_type};"))
+                        logger.info(f"Auto migrated: added column '{col_name}' to table 'bad_case_clusters'.")
+        except Exception as e:
+            logger.warning(f"bad_case_clusters migration skipped or failed: {e}")
 
         logger.info("All database tables created or confirmed.")
 

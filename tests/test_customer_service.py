@@ -321,3 +321,42 @@ async def test_auth_login_and_agent_chat():
         agent_msg = next((m for m in msgs if m["role"] == "human_agent"), None)
         assert agent_msg is not None
         assert "已为您处理好账号问题" in agent_msg["content"]
+
+@pytest.mark.asyncio
+async def test_user_profile_rbac_and_data():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 1. 普通客户访问客户画像 -> 403 Forbidden
+        user_headers = {"X-User-Role": "user", "X-User-Id": "user_001"}
+        res = await ac.get("/api/v1/chat/user-profile", headers=user_headers)
+        assert res.status_code == 403
+
+        # 2. 技术客服访问客户画像 -> 200 OK 且包含完整指标
+        tech_headers = {"X-User-Role": "tech_agent", "X-User-Id": "agent_1028"}
+        res = await ac.get("/api/v1/chat/user-profile?customer_id=U10086", headers=tech_headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["user_id"] == "U10086"
+        assert data["name"] == "张先生"
+        assert data["phone"] == "138****5678"
+        assert data["channel"] == "微信小程序"
+        assert data["vip_level"] == "企业VIP"
+        assert data["recent_order"]["order_id"] == "ORD_20261025"
+        assert data["recent_order"]["product"] == "智能语音盒"
+        assert data["recent_order"]["status"] == "已发货"
+        assert data["pending_issue"] == "昨日反馈设备无法连接WiFi，等待固件更新"
+        assert "技术小白" in data["tags"]
+        assert "急躁型" in data["tags"]
+
+        # 3. 超管访问客户画像 -> 200 OK
+        admin_headers = {"X-User-Role": "admin", "X-User-Id": "admin_master"}
+        res = await ac.get("/api/v1/chat/user-profile", headers=admin_headers)
+        assert res.status_code == 200
+        assert res.json()["user_id"] == "U10086"
+
+        # 4. 技术客服动态更新标签
+        res = await ac.put("/api/v1/chat/user-profile?customer_id=U10086", json={
+            "tags": ["技术小白", "急躁型", "已电话回访"]
+        }, headers=tech_headers)
+        assert res.status_code == 200
+        assert "已电话回访" in res.json()["tags"]

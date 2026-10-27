@@ -1,6 +1,7 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, update
 
@@ -30,8 +31,13 @@ PRODUCT_DEFAULT_AGENT = {
     "FIN_AI": "agent_1030"
 }
 
-# 1. 查询会话列表 (普通用户仅看本人会话，技术客服仅看分配给自己的进行中会话，超管可查看全局包括历史会话)
-@router.get("/sessions", response_model=List[ChatSessionResponse], summary="查询多客户客服会话列表")
+# 1. 查询会话列表 (普通用户仅看本人会话，技术客服仅看分配给自己的进行中会话，超管可查看全局包括历史会话；运营角色无权访问)
+@router.get(
+    "/sessions", 
+    response_model=List[ChatSessionResponse], 
+    summary="查询多客户客服会话列表",
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_USER]))]
+)
 async def list_chat_sessions(
     product_code: Optional[str] = Query(None, description="产品线筛选"),
     status: Optional[str] = Query(None, description="状态筛选: AI_SERVICE, HUMAN_CONNECTED, CLOSED 等"),
@@ -113,14 +119,24 @@ async def create_chat_session(payload: ChatSessionCreate, db: AsyncSession = Dep
     return session
 
 # 3. 获取指定会话的历史消息
-@router.get("/sessions/{session_id}/messages", response_model=List[ChatMessageResponse], summary="加载会话历史消息流")
+@router.get(
+    "/sessions/{session_id}/messages", 
+    response_model=List[ChatMessageResponse], 
+    summary="加载会话历史消息流",
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_USER]))]
+)
 async def get_session_messages(session_id: str, db: AsyncSession = Depends(get_db)):
     stmt = select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc())
     res = await db.execute(stmt)
     return res.scalars().all()
 
 # 4. 对话主入口（集成会话消息持久化与业务卡片）
-@router.post("", response_model=ChatResponse, summary="多客户客服对话接口（LangGraph编排与业务接入）")
+@router.post(
+    "", 
+    response_model=ChatResponse, 
+    summary="多客户客服对话接口（LangGraph编排与业务接入）",
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_USER]))]
+)
 async def chat_interaction(
     payload: ChatMessageRequest, 
     current_user: CurrentUser = Depends(get_current_user),
@@ -298,6 +314,49 @@ async def chat_interaction(
         business_data=biz_data
     )
     db.add(assistant_msg)
+    await db.flush()
+
+    # 4.9 隐性未命中类 BadCase 自动感知 (低于相似度阈值或命中 Fallback)
+    if score < 0.40 or reply_type == "FALLBACK":
+        import uuid as _uuid
+        from app.models.bad_case import BadCase
+        from app.services.badcase_service import badcase_service
+
+        # 优化上下文记忆：逆向动态提取近三轮用户输入间的全部交互
+        dynamic_context = await badcase_service.get_sliding_context(
+            db=db,
+            session_id=session.id,
+            until_time=assistant_msg.created_at,
+            max_user_rounds=3
+        )
+        if not dynamic_context:
+            dynamic_context = [
+                {"role": "user", "content": payload.query},
+                {"role": "assistant", "content": content}
+            ]
+
+        auto_case = BadCase(
+            id=str(_uuid.uuid4()),
+            product_code=payload.product_code,
+            kb_id=kb.id,
+            session_id=session.id,
+            message_id=assistant_msg.id,
+            case_type="LOW_CONFIDENCE",
+            user_query=payload.query,
+            ai_raw_response=content,
+            recall_sources=[s.model_dump() for s in sources],
+            confidence_score=score,
+            chat_context=dynamic_context,
+            status="PENDING"
+        )
+
+        # 自动化客观测根因定位
+        rc_code, rc_name, rc_reason = await badcase_service.diagnose_case_root_cause(db, auto_case)
+        auto_case.root_cause_code = rc_code
+        auto_case.root_cause_name = rc_name
+        auto_case.root_cause_reason = rc_reason
+
+        db.add(auto_case)
 
     # 更新会话最后消息
     session.last_message = payload.query
@@ -305,6 +364,7 @@ async def chat_interaction(
     await db.commit()
 
     return ChatResponse(
+        message_id=assistant_msg.id,
         session_id=session.id,
         reply_type=reply_type,
         confidence_score=score,
@@ -318,7 +378,11 @@ async def chat_interaction(
     )
 
 # 5. 转人工客服接口（按产品自动路由对应客服工号）
-@router.post("/transfer-human", summary="用户申请接入人工座席")
+@router.post(
+    "/transfer-human", 
+    summary="用户申请接入人工座席",
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_USER]))]
+)
 async def transfer_to_human(payload: TransferHumanRequest, db: AsyncSession = Depends(get_db)):
     session = await db.get(ChatSession, payload.session_id)
     if not session:
@@ -359,7 +423,11 @@ async def transfer_to_human(payload: TransferHumanRequest, db: AsyncSession = De
     }
 
 # 6. 用户主动挂断人工客服接口（用户主动结束或离开页面自动挂断）
-@router.post("/hangup", summary="用户主动挂断人工客服，恢复AI接待")
+@router.post(
+    "/hangup", 
+    summary="用户主动挂断人工客服，恢复AI接待",
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_USER]))]
+)
 async def hangup_human_service(session_id: str = Query(...), db: AsyncSession = Depends(get_db)):
     session = await db.get(ChatSession, session_id)
     if not session:
@@ -387,7 +455,11 @@ async def hangup_human_service(session_id: str = Query(...), db: AsyncSession = 
     }
 
 # 7. 客服或管理员结束人工服务，恢复AI接待
-@router.post("/finish-human", summary="结束人工客服会话返回AI")
+@router.post(
+    "/finish-human", 
+    summary="结束人工客服会话返回AI",
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT]))]
+)
 async def finish_human_service(session_id: str = Query(...), db: AsyncSession = Depends(get_db)):
     session = await db.get(ChatSession, session_id)
     if not session:
@@ -407,3 +479,103 @@ async def finish_human_service(session_id: str = Query(...), db: AsyncSession = 
     session.last_message_at = datetime.now()
     await db.commit()
     return {"status": "AI_SERVICE", "message": "已恢复AI客服接待"}
+
+# 8. 客户画像数据接口（仅技术客服和超管可见与管理）
+DEFAULT_CUSTOMER_PROFILES: Dict[str, Dict[str, Any]] = {
+    "U10086": {
+        "user_id": "U10086",
+        "name": "张先生",
+        "phone": "138****5678",
+        "channel": "微信小程序",
+        "vip_level": "企业VIP",
+        "recent_order": {
+            "order_id": "ORD_20261025",
+            "product": "智能语音盒",
+            "status": "已发货"
+        },
+        "pending_issue": "昨日反馈设备无法连接WiFi，等待固件更新",
+        "tags": ["技术小白", "急躁型"]
+    }
+}
+
+class UserProfileUpdate(BaseModel):
+    user_id: Optional[str] = None
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    channel: Optional[str] = None
+    vip_level: Optional[str] = None
+    recent_order: Optional[Dict[str, Any]] = None
+    pending_issue: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+@router.get("/user-profile", summary="获取客户画像数据（仅技术客服与超管可见）")
+async def get_user_profile(
+    customer_id: Optional[str] = Query(None, description="客户ID/编号"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    技术客服与超级管理员专属：获取客户360度全景画像数据
+    """
+    if current_user.role not in [ROLE_ADMIN, ROLE_TECH_AGENT]:
+        raise HTTPException(status_code=403, detail="无权查阅客户画像敏感数据")
+
+    cid = (customer_id or "U10086").strip()
+    profile = DEFAULT_CUSTOMER_PROFILES.get(cid)
+    if not profile:
+        profile = {
+            "user_id": cid if cid.startswith("U") else "U10086",
+            "name": "张先生" if cid in ["user_001", "U10086"] else f"客户·{cid}",
+            "phone": "138****5678",
+            "channel": "微信小程序",
+            "vip_level": "企业VIP",
+            "recent_order": {
+                "order_id": "ORD_20261025",
+                "product": "智能语音盒",
+                "status": "已发货"
+            },
+            "pending_issue": "昨日反馈设备无法连接WiFi，等待固件更新",
+            "tags": ["技术小白", "急躁型"]
+        }
+    return profile
+
+@router.put("/user-profile", summary="更新客户画像数据（仅技术客服与超管可用）")
+async def update_user_profile(
+    payload: UserProfileUpdate,
+    customer_id: Optional[str] = Query("U10086", description="客户ID"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    if current_user.role not in [ROLE_ADMIN, ROLE_TECH_AGENT]:
+        raise HTTPException(status_code=403, detail="无权修改客户画像")
+
+    cid = customer_id or "U10086"
+    profile = DEFAULT_CUSTOMER_PROFILES.setdefault(cid, {
+        "user_id": "U10086",
+        "name": "张先生",
+        "phone": "138****5678",
+        "channel": "微信小程序",
+        "vip_level": "企业VIP",
+        "recent_order": {
+            "order_id": "ORD_20261025",
+            "product": "智能语音盒",
+            "status": "已发货"
+        },
+        "pending_issue": "昨日反馈设备无法连接WiFi，等待固件更新",
+        "tags": ["技术小白", "急躁型"]
+    })
+
+    if payload.tags is not None:
+        profile["tags"] = payload.tags
+    if payload.pending_issue is not None:
+        profile["pending_issue"] = payload.pending_issue
+    if payload.vip_level is not None:
+        profile["vip_level"] = payload.vip_level
+    if payload.phone is not None:
+        profile["phone"] = payload.phone
+    if payload.channel is not None:
+        profile["channel"] = payload.channel
+    if payload.name is not None:
+        profile["name"] = payload.name
+    if payload.recent_order is not None:
+        profile["recent_order"] = payload.recent_order
+
+    return profile

@@ -30,31 +30,37 @@ async def seed_demo_data():
             # 即使知识库已存在，也确保会话被初始化
             from app.models.chat_session import ChatSession, ChatMessage
             import datetime
-            sess_res = await db.execute(select(ChatSession).limit(1))
-            if not sess_res.scalars().first():
-                s1 = ChatSession(
-                    customer_id="user_001",
-                    customer_name="张先生 · 钻石VIP客户",
+            # 确保演示客服会话中包含 U10086 张先生会话（专属技术客服接入）
+            u10086_res = await db.execute(select(ChatSession).where(ChatSession.customer_id == "U10086"))
+            if not u10086_res.scalars().first():
+                s_u10086 = ChatSession(
+                    customer_id="U10086",
+                    customer_name="张先生",
                     product_code="SAAS_CLOUD",
-                    status="AI_SERVICE",
-                    last_message="怎么退款",
-                    last_message_at=datetime.datetime.now() - datetime.timedelta(minutes=5)
+                    status="HUMAN_CONNECTED",
+                    assigned_agent="agent_1028",
+                    last_message="昨日反馈设备无法连接WiFi，等待固件更新",
+                    last_message_at=datetime.datetime.now()
                 )
-                db.add(s1)
+                db.add(s_u10086)
                 await db.flush()
                 db.add(ChatMessage(
-                    session_id=s1.id,
+                    session_id=s_u10086.id,
                     role="user",
-                    content="怎么退款",
-                    raw_query="怎么退款"
+                    content="设备怎么还是连不上WiFi？昨天说好的固件更新出来了吗？",
+                    raw_query="设备怎么还是连不上WiFi？昨天说好的固件更新出来了吗？"
                 ))
                 db.add(ChatMessage(
-                    session_id=s1.id,
+                    session_id=s_u10086.id,
                     role="assistant",
-                    content="购买本平台 SaaS 订阅服务或云资源实例后，自订单支付之日起 7 个自然日内，若未产生超出基础配额 5% 的计算资源消耗，用户均享有无理由全额退款权益。",
-                    reply_type="DIRECT_ANSWER",
-                    confidence_score=0.892,
-                    raw_query="怎么退款"
+                    content="张先生您好，理解您的着急心情。WiFi连接问题我们正在加急推进固件更新排期，请稍候，我马上为您转接专属技术座席。",
+                    reply_type="HUMAN_AGENT"
+                ))
+                db.add(ChatMessage(
+                    session_id=s_u10086.id,
+                    role="system",
+                    content="已为您接入专属技术客服专员（工号: agent_1028）",
+                    reply_type="SYSTEM"
                 ))
                 await db.commit()
             return

@@ -20,7 +20,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.document import Document
 from app.models.chunk import DocumentChunk
 from app.schemas.knowledge_base import KBCreate, KBUpdate, KBResponse
-from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT
+from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_OPERATOR
 
 # 知识库管理模块：查询对管理员和技术客服开放（按产品权限隔离），增删改仅对超级管理员开放
 router = APIRouter(
@@ -65,10 +65,13 @@ async def list_knowledge_bases(
 ):
     stmt = select(KnowledgeBase)
     
-    # 权限与数据隔离：如果是技术客服，只能看归属于自己产品的知识库
+    # 权限与数据隔离：技术客服只能看归属产品，运营专员只能看负责知识库
     if current_user.role == ROLE_TECH_AGENT:
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         stmt = stmt.where(KnowledgeBase.product_code == allowed_product)
+    elif current_user.role == ROLE_OPERATOR:
+        assigned_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
+        stmt = stmt.where(KnowledgeBase.id == assigned_kb)
     elif product_code:
         stmt = stmt.where(KnowledgeBase.product_code == product_code)
 

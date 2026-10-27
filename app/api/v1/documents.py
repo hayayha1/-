@@ -18,13 +18,13 @@ from app.schemas.document import (
 )
 from app.services.chunking.splitter import DocumentChunker
 from app.services.model_service import model_service
-from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT
+from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_OPERATOR
 
-# 知识文档与FAQ管理模块对 超级管理员 与 技术客服 开放
+# 知识文档与FAQ管理模块对 超级管理员、运营人员 与 技术客服 开放
 router = APIRouter(
     prefix="/documents", 
     tags=["知识文档与FAQ管理"],
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_OPERATOR]))]
 )
 
 async def index_document_chunks(doc: Document, db: AsyncSession) -> int:
@@ -96,11 +96,15 @@ async def upload_document(
     if not kb:
         raise HTTPException(status_code=404, detail="目标知识库不存在")
 
-    # 权限隔离校验：技术客服只能向自己所属产品的知识库提交文档
+    # 权限隔离校验：技术客服只能向自己所属产品的知识库提交文档；运营专员只能向负责知识库提交
     if current_user.role == ROLE_TECH_AGENT:
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         if kb.product_code != allowed_product:
             raise HTTPException(status_code=403, detail="权限不足：您不能向非本产品归属的知识库上传文档")
+    elif current_user.role == ROLE_OPERATOR:
+        allowed_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
+        if kb.id != allowed_kb:
+            raise HTTPException(status_code=403, detail="权限不足：运营人员只能向自身负责的知识库上传文档")
 
     filename = file.filename or "uploaded_file.txt"
     ext = filename.rsplit(".", 1)[-1].upper() if "." in filename else "TXT"
@@ -112,9 +116,9 @@ async def upload_document(
     except UnicodeDecodeError:
         content_text = content_bytes.decode("gbk", errors="ignore")
 
-    # 审核流逻辑：技术客服提交设为 PENDING_REVIEW 待审核；超管直接 ACTIVE
-    is_tech = (current_user.role == ROLE_TECH_AGENT)
-    doc_status = "PENDING_REVIEW" if is_tech else "ACTIVE"
+    # 审核流逻辑：技术客服或运营人员提交设为 PENDING_REVIEW 待审核；超管直接 ACTIVE
+    is_admin = (current_user.role == ROLE_ADMIN)
+    doc_status = "ACTIVE" if is_admin else "PENDING_REVIEW"
 
     doc = Document(
         kb_id=kb_id,
@@ -162,9 +166,13 @@ async def create_document(
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         if kb.product_code != allowed_product:
             raise HTTPException(status_code=403, detail="权限不足：您不能向非本产品归属的知识库创建文档")
+    elif current_user.role == ROLE_OPERATOR:
+        allowed_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
+        if kb.id != allowed_kb:
+            raise HTTPException(status_code=403, detail="权限不足：运营人员只能向自身负责的知识库创建文档")
 
-    is_tech = (current_user.role == ROLE_TECH_AGENT)
-    doc_status = "PENDING_REVIEW" if is_tech else "ACTIVE"
+    is_admin = (current_user.role == ROLE_ADMIN)
+    doc_status = "ACTIVE" if is_admin else "PENDING_REVIEW"
 
     doc = Document(
         kb_id=payload.kb_id,
@@ -211,9 +219,13 @@ async def batch_import_faq(
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         if kb.product_code != allowed_product:
             raise HTTPException(status_code=403, detail="权限不足：您不能向非本产品归属的知识库录入FAQ")
+    elif current_user.role == ROLE_OPERATOR:
+        allowed_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
+        if kb.id != allowed_kb:
+            raise HTTPException(status_code=403, detail="权限不足：运营人员只能向自身负责的知识库录入FAQ")
 
-    is_tech = (current_user.role == ROLE_TECH_AGENT)
-    doc_status = "PENDING_REVIEW" if is_tech else "ACTIVE"
+    is_admin = (current_user.role == ROLE_ADMIN)
+    doc_status = "ACTIVE" if is_admin else "PENDING_REVIEW"
 
     doc = Document(
         kb_id=payload.kb_id,
@@ -291,6 +303,10 @@ async def list_documents(
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         kb_subq = select(KnowledgeBase.id).where(KnowledgeBase.product_code == allowed_product)
         stmt = stmt.where(Document.kb_id.in_(kb_subq))
+    elif current_user.role == ROLE_OPERATOR:
+        # 运营人员数据隔离：每个知识库有不同组的运营，只能看负责知识库文档
+        assigned_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
+        stmt = stmt.where(Document.kb_id == assigned_kb)
 
     if kb_id:
         stmt = stmt.where(Document.kb_id == kb_id)
@@ -313,12 +329,37 @@ async def get_document_detail(doc_id: str, db: AsyncSession = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
+    content = doc.content
+    faq_data = None
+    if doc.doc_type == "FAQ":
+        f_stmt = select(FAQItem).where(FAQItem.doc_id == doc.id).limit(1)
+        f = (await db.execute(f_stmt)).scalars().first()
+        if f:
+            faq_data = {
+                "standard_question": f.standard_question,
+                "similar_questions": f.similar_questions or [],
+                "answer": f.answer
+            }
+            if not content:
+                content = f"【标准问题】: {f.standard_question}\n【相似问法】: {'；'.join(f.similar_questions or [])}\n【标准解答】: {f.answer}"
+
+    if not content:
+        v_stmt = select(DocumentVersion).where(DocumentVersion.doc_id == doc.id).order_by(DocumentVersion.version.desc()).limit(1)
+        v = (await db.execute(v_stmt)).scalars().first()
+        if v and v.content:
+            content = v.content
+
     stmt_chunks = select(DocumentChunk).where(DocumentChunk.doc_id == doc_id).order_by(DocumentChunk.chunk_index.asc())
     c_res = await db.execute(stmt_chunks)
     chunks = c_res.scalars().all()
 
+    doc_resp = DocumentResponse.model_validate(doc)
+    doc_resp.content = content or ""
+
     return {
-        "doc": DocumentResponse.model_validate(doc),
+        "doc": doc_resp,
+        "content": content or "",
+        "faq": faq_data,
         "chunk_count": len(chunks),
         "chunks": [
             {
@@ -510,7 +551,7 @@ async def rollback_document_version(
         db=db
     )
 
-@router.delete("/{doc_id}", summary="删除文档（级联清除所有切片与版本）")
+@router.delete("/{doc_id}", summary="删除文档（级联清除所有切片与版本）", dependencies=[Depends(require_roles([ROLE_ADMIN]))])
 async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)):
     doc = await db.get(Document, doc_id)
     if not doc:

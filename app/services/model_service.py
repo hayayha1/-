@@ -48,8 +48,28 @@ class ModelService:
         return self._fallback_embedding(text)
 
     async def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """批量获取向量"""
-        return [await self.get_embedding(t) for t in texts]
+        """批量获取向量（支持单次网络批量请求与降级）"""
+        if not texts:
+            return []
+        
+        # 优先通过 SiliconFlow 批量接口单次往返获取
+        if self.embedding_api_key and "sk-" in self.embedding_api_key:
+            try:
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    resp = await client.post(
+                        f"{self.embedding_base_url}/embeddings",
+                        headers={"Authorization": f"Bearer {self.embedding_api_key}"},
+                        json={"input": texts, "model": self.embedding_model}
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json().get("data", [])
+                        sorted_items = sorted(data, key=lambda x: x.get("index", 0))
+                        if len(sorted_items) == len(texts):
+                            return [item["embedding"] for item in sorted_items]
+            except Exception as e:
+                print(f"[ModelService] Batch embedding API failed, fallback to local: {e}")
+        
+        return [self._fallback_embedding(t) for t in texts]
 
     def _fallback_embedding(self, text: str) -> List[float]:
         """生成具备语义特征的 1024 维归一化向量"""

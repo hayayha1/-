@@ -27,6 +27,7 @@ class ChatMessageRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000, description="客户原始问句")
 
 class ChatResponse(BaseModel):
+    message_id: Optional[str] = Field(None, description="助手消息记录ID")
     session_id: str = Field(..., description="当前会话ID")
     reply_type: str = Field(
         ..., 

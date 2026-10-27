@@ -10,13 +10,13 @@ from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.services.retrieval.engine import retrieval_engine
 from app.services.model_service import model_service
-from app.core.auth import require_roles, ROLE_ADMIN, ROLE_TECH_AGENT
+from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_OPERATOR
 
-# 检索切片明细流仅对 超级管理员 与 技术客服 开放
+# 检索切片明细流对 超级管理员、技术客服与运营 开放
 router = APIRouter(
     prefix="/chunks", 
     tags=["知识片段管理"],
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_OPERATOR]))]
 )
 
 @router.get("", summary="知识片段列表分页与条件检索")
@@ -26,13 +26,18 @@ async def list_chunks(
     keyword: Optional[str] = Query(None, description="切片文本内容搜索"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(DocumentChunk, Document.name.label("doc_name"), Document.doc_type).outerjoin(
         Document, DocumentChunk.doc_id == Document.id
     )
 
-    if doc_id:
+    # 运营数据权限隔离
+    if current_user.role == ROLE_OPERATOR:
+        assigned_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
+        stmt = stmt.where(DocumentChunk.kb_id == assigned_kb)
+    elif doc_id:
         stmt = stmt.where(DocumentChunk.doc_id == doc_id)
     elif kb_id:
         stmt = stmt.where(DocumentChunk.kb_id == kb_id)
