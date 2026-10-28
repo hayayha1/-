@@ -268,4 +268,6 @@ def create_customer_service_graph():
 
     return graph.compile()
 
-customer_service_graph = create_customer_service_graph()
+# 升级为新一代 Agent 智能体全流程状态图编排
+from app.workflow.agent_customer_service_graph import agent_customer_service_graph
+customer_service_graph = agent_customer_service_graph

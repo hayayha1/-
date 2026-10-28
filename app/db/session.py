@@ -97,6 +97,23 @@ async def init_db():
             except Exception as e:
                 logger.warning(f"tenant_id migration skipped for {tbl}: {e}")
 
+        # 兼容性迁移：确保 chat_sessions 具备质检字段
+        try:
+            res = await conn.execute(text("PRAGMA table_info(chat_sessions);"))
+            cs_cols = [row[1] for row in res.fetchall()]
+            if cs_cols:
+                for col_name, col_type in [
+                    ("qa_score", "INTEGER"),
+                    ("qa_feedback", "TEXT"),
+                    ("qa_tags", "TEXT"),
+                    ("qa_inspector", "VARCHAR(64)")
+                ]:
+                    if col_name not in cs_cols:
+                        await conn.execute(text(f"ALTER TABLE chat_sessions ADD COLUMN {col_name} {col_type};"))
+                        logger.info(f"Auto migrated: added column '{col_name}' to table 'chat_sessions'.")
+        except Exception as e:
+            logger.warning(f"chat_sessions qa migration skipped: {e}")
+
         logger.info("All database tables created or confirmed.")
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

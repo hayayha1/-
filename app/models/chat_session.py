@@ -29,6 +29,12 @@ class ChatSession(Base, TimestampMixin):
         comment="最后活跃时间"
     )
 
+    # 质检与服务质量审计字段
+    qa_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="质检评分: 1-5分")
+    qa_feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="质检评语")
+    qa_tags: Mapped[Optional[List[str]]] = mapped_column(JSON, default=list, nullable=True, comment="质检问题标签")
+    qa_inspector: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, comment="质检审核人工号")
+
     messages: Mapped[List["ChatMessage"]] = relationship(
         "ChatMessage",
         back_populates="session",

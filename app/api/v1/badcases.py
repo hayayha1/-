@@ -28,7 +28,13 @@ from app.core.auth import (
     ROLE_ADMIN, 
     ROLE_OPERATOR, 
     ROLE_TECH_AGENT, 
-    ROLE_USER
+    ROLE_USER,
+    ROLE_PLATFORM_ADMIN,
+    ROLE_TENANT_ADMIN,
+    ROLE_KNOWLEDGE_MASTER,
+    ROLE_QA_SUPERVISOR,
+    ROLE_SERVICE_AGENT,
+    ROLE_END_USER
 )
 
 router = APIRouter(prefix="/badcases", tags=["BadCase 全生命周期治理与运营"])
@@ -246,7 +252,11 @@ async def submit_user_feedback(
 
     return {"status": "ok", "message": "感谢您的好评！"}
 
-@router.post("/agent-label", summary="坐席人工介入标注 (技术客服工作台)")
+@router.post(
+    "/agent-label", 
+    summary="坐席/质检人工介入标注 (客服与质检工作台)",
+    dependencies=[Depends(require_roles([ROLE_QA_SUPERVISOR, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT, ROLE_TENANT_ADMIN, ROLE_ADMIN]))]
+)
 async def submit_agent_label(
     payload: AgentLabelRequest,
     current_user: CurrentUser = Depends(get_current_user),

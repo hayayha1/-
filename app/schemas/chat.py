@@ -63,6 +63,21 @@ class ChatSessionResponse(BaseModel):
     last_message: Optional[str] = None
     last_message_at: datetime
     created_at: datetime
+    qa_score: Optional[int] = None
+    qa_feedback: Optional[str] = None
+    qa_tags: Optional[List[str]] = None
+    qa_inspector: Optional[str] = None
+
+class QAReviewRequest(BaseModel):
+    score: int = Field(..., ge=1, le=5, description="质检评分: 1-5分")
+    feedback: Optional[str] = Field(None, description="质检合规评语")
+    tags: List[str] = Field(default_factory=list, description="质检问题标签")
+    push_to_badcase: bool = Field(default=False, description="是否推送至BadCase待办池")
+    badcase_notes: Optional[str] = Field(None, description="BadCase详细描述")
+
+class ReassignSessionRequest(BaseModel):
+    target_agent: str = Field(..., description="目标客服工号，如 agent_1028, agent_1029")
+    reason: Optional[str] = Field(None, description="改派调度理由")
 
 class ChatMessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

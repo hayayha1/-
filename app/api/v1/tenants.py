@@ -10,7 +10,18 @@ from app.db.session import get_db
 from app.models.tenant import Tenant
 from app.models.knowledge_base import KnowledgeBase
 from app.models.chat_session import ChatSession
-from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN
+from app.core.auth import (
+    get_current_user, 
+    CurrentUser, 
+    require_roles, 
+    ROLE_ADMIN,
+    ROLE_PLATFORM_ADMIN,
+    ROLE_TENANT_ADMIN,
+    ROLE_KNOWLEDGE_MASTER,
+    ROLE_QA_SUPERVISOR,
+    ROLE_SERVICE_AGENT,
+    ROLE_TECH_AGENT
+)
 
 router = APIRouter(prefix="/tenants", tags=["多租户管理与配额中心"])
 
@@ -229,8 +240,13 @@ async def update_tenant(
     await db.refresh(tenant)
     return tenant
 
-# 6. 自定义品牌 Whitelabel 配置更新（租户管理员或超管）
-@router.put("/{tenant_id_or_code}/brand", response_model=TenantResponse, summary="更新企业品牌与人设配置")
+# 6. 自定义品牌 Whitelabel 配置更新（企业租户管理员或平台超管）
+@router.put(
+    "/{tenant_id_or_code}/brand", 
+    response_model=TenantResponse, 
+    summary="更新企业品牌与人设配置",
+    dependencies=[Depends(require_roles([ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN]))]
+)
 async def update_tenant_brand(
     tenant_id_or_code: str,
     brand_payload: TenantBrandConfig,
@@ -253,7 +269,11 @@ async def update_tenant_brand(
     return tenant
 
 # 7. 租户资源消耗与实时用量监控
-@router.get("/{tenant_id_or_code}/usage", summary="租户资源消耗看板与配额健康度")
+@router.get(
+    "/{tenant_id_or_code}/usage", 
+    summary="租户资源消耗看板与配额健康度",
+    dependencies=[Depends(require_roles([ROLE_TENANT_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_QA_SUPERVISOR, ROLE_PLATFORM_ADMIN, ROLE_ADMIN]))]
+)
 async def get_tenant_usage(
     tenant_id_or_code: str,
     current_user: CurrentUser = Depends(get_current_user),
@@ -307,4 +327,25 @@ async def get_tenant_usage(
             "active_sessions": active_sessions,
             "max_seats": tenant.max_seats
         }
+    }
+
+# 8. 获取当前租户坐席列表与席位占用 (企业超管)
+@router.get(
+    "/current/agents", 
+    summary="获取当前企业坐席列表与席位占用情况", 
+    dependencies=[Depends(require_roles([ROLE_TENANT_ADMIN, ROLE_QA_SUPERVISOR, ROLE_PLATFORM_ADMIN, ROLE_ADMIN]))]
+)
+async def list_tenant_agents(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    from app.core.auth import AGENT_PRODUCT_MAP
+    agents_list = [
+        {"agent_id": aid, "product_code": pcode, "status": "ONLINE", "name": f"技术坐席({aid})"}
+        for aid, pcode in AGENT_PRODUCT_MAP.items()
+    ]
+    return {
+        "tenant_id": current_user.tenant_id or "tenant_default",
+        "used_seats": len(agents_list),
+        "agents": agents_list
     }

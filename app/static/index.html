@@ -172,98 +172,66 @@
 
           <p class="text-[11px] text-slate-400 font-medium mb-2.5 text-center">快捷体验账号（一键填入并登录）</p>
 
-          <div class="grid grid-cols-5 gap-2">
-
+          <div class="grid grid-cols-6 gap-2">
             <button 
-
               type="button" 
-
-              @click="quickFillLogin('admin', 'admin123')"
-
-              class="bg-white/5 hover:bg-white/15 border border-white/10 rounded-xl p-2 text-center transition group cursor-pointer"
-
-            >
-
-              <div class="text-base group-hover:scale-110 transition">👑</div>
-
-              <div class="font-bold text-white text-[11px] mt-1">超级管理员</div>
-
-              <div class="text-[9px] text-slate-400 font-mono">admin / admin123</div>
-
-            </button>
-
-            <button 
-
-              type="button" 
-
-              @click="quickFillLogin('ops', 'ops123')"
-
+              @click="quickFillLogin('platform_admin', 'admin123')"
               class="bg-white/5 hover:bg-rose-500/20 border border-rose-500/30 rounded-xl p-2 text-center transition group cursor-pointer"
-
             >
-
-              <div class="text-base group-hover:scale-110 transition">🚨</div>
-
-              <div class="font-bold text-rose-300 text-[11px] mt-1">电商运营</div>
-
-              <div class="text-[9px] text-slate-400 font-mono">ops / ops123</div>
-
+              <div class="text-base group-hover:scale-110 transition">👑</div>
+              <div class="font-bold text-rose-300 text-[11px] mt-1">平台超管</div>
+              <div class="text-[9px] text-slate-400 font-mono">platform_admin</div>
             </button>
 
             <button 
-
               type="button" 
+              @click="quickFillLogin('tenant_admin', 'admin123')"
+              class="bg-white/5 hover:bg-indigo-500/20 border border-indigo-500/30 rounded-xl p-2 text-center transition group cursor-pointer"
+            >
+              <div class="text-base group-hover:scale-110 transition">🏢</div>
+              <div class="font-bold text-indigo-300 text-[11px] mt-1">企业超管</div>
+              <div class="text-[9px] text-slate-400 font-mono">tenant_admin</div>
+            </button>
 
-              @click="quickFillLogin('tech', 'tech123')"
+            <button 
+              type="button" 
+              @click="quickFillLogin('knowledge_master', 'km123')"
+              class="bg-white/5 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-xl p-2 text-center transition group cursor-pointer"
+            >
+              <div class="text-base group-hover:scale-110 transition">🧠</div>
+              <div class="font-bold text-emerald-300 text-[11px] mt-1">知识主管</div>
+              <div class="text-[9px] text-slate-400 font-mono">km / km123</div>
+            </button>
 
+            <button 
+              type="button" 
+              @click="quickFillLogin('qa_supervisor', 'qa123')"
+              class="bg-white/5 hover:bg-purple-500/20 border border-purple-500/30 rounded-xl p-2 text-center transition group cursor-pointer"
+            >
+              <div class="text-base group-hover:scale-110 transition">🔍</div>
+              <div class="font-bold text-purple-300 text-[11px] mt-1">质检主管</div>
+              <div class="text-[9px] text-slate-400 font-mono">qa / qa123</div>
+            </button>
+
+            <button 
+              type="button" 
+              @click="quickFillLogin('service_agent', 'agent123')"
               class="bg-white/5 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl p-2 text-center transition group cursor-pointer"
-
             >
-
               <div class="text-base group-hover:scale-110 transition">👩‍💼</div>
-
-              <div class="font-bold text-amber-200 text-[11px] mt-1">SaaS客服</div>
-
-              <div class="text-[9px] text-slate-400 font-mono">tech / tech123</div>
-
+              <div class="font-bold text-amber-200 text-[11px] mt-1">技术坐席</div>
+              <div class="text-[9px] text-slate-400 font-mono">agent / agent123</div>
             </button>
 
             <button 
-
               type="button" 
-
-              @click="quickFillLogin('tech_ec', 'tech123')"
-
-              class="bg-white/5 hover:bg-sky-500/20 border border-sky-500/30 rounded-xl p-2 text-center transition group cursor-pointer"
-
-            >
-
-              <div class="text-base group-hover:scale-110 transition">👨‍💻</div>
-
-              <div class="font-bold text-sky-200 text-[11px] mt-1">电商客服</div>
-
-              <div class="text-[9px] text-slate-400 font-mono">tech_ec / tech123</div>
-
-            </button>
-
-            <button 
-
-              type="button" 
-
-              @click="quickFillLogin('user', 'user123')"
-
+              @click="quickFillLogin('end_user', 'user123')"
               class="bg-white/5 hover:bg-white/15 border border-white/10 rounded-xl p-2 text-center transition group cursor-pointer"
-
             >
-
               <div class="text-base group-hover:scale-110 transition">👤</div>
-
-              <div class="font-bold text-white text-[11px] mt-1">普通用户</div>
-
+              <div class="font-bold text-white text-[11px] mt-1">终端客户</div>
               <div class="text-[9px] text-slate-400 font-mono">user / user123</div>
-
             </button>
-
           </div>
 
           <div class="mt-2 text-center text-[10px] text-slate-400">
@@ -1538,6 +1506,55 @@
 
                       </div>
 
+                    </div>
+
+                    <!-- 高危写操作二次确认卡片 -->
+                    <div v-else-if="m.business_data.card_type === 'CONFIRMATION_CARD'" class="bg-amber-50/80 p-3.5 rounded-xl border-2 border-amber-300 text-slate-800 space-y-2.5 shadow-sm">
+                      <div class="flex items-center justify-between font-bold text-xs border-b border-amber-200 pb-1.5">
+                        <span class="text-amber-950 flex items-center gap-1.5 font-bold">{{ m.business_data.title }}</span>
+                        <span class="text-amber-800 bg-amber-200/80 px-2 py-0.5 rounded text-[10px] font-bold">待用户授权</span>
+                      </div>
+                      <p class="text-slate-700 text-[11px] leading-snug">{{ m.business_data.summary }}</p>
+                      <div v-if="m.business_data.details" class="bg-white/80 p-2.5 rounded-lg border border-amber-200 space-y-1.5 text-xs">
+                        <div v-for="(dt, didx) in m.business_data.details" :key="didx" class="flex justify-between text-[11px]">
+                          <span class="text-slate-500">{{ dt.label }}:</span>
+                          <span class="font-medium text-slate-800">{{ dt.value }}</span>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2 pt-1.5">
+                        <button 
+                          @click="sendQuickPrompt(m.business_data.confirm_prompt || '确认办理')"
+                          class="flex-1 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm transition flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          {{ m.business_data.confirm_text || '✅ 确认办理' }}
+                        </button>
+                        <button 
+                          @click="sendQuickPrompt(m.business_data.cancel_prompt || '取消办理')"
+                          class="px-3 py-1.5 text-xs font-medium bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg transition cursor-pointer"
+                        >
+                          {{ m.business_data.cancel_text || '❌ 取消' }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- 槽位主动反向追问卡片 -->
+                    <div v-else-if="m.business_data.card_type === 'CLARIFICATION_CARD'" class="bg-sky-50/80 p-3.5 rounded-xl border border-sky-200 text-slate-800 space-y-2.5 shadow-sm">
+                      <div class="flex items-center justify-between font-bold text-xs border-b border-sky-200 pb-1.5">
+                        <span class="text-sky-950 flex items-center gap-1.5">🎯 {{ m.business_data.title }}</span>
+                        <span class="text-sky-700 bg-sky-100 px-2 py-0.5 rounded text-[10px] font-medium">请选择</span>
+                      </div>
+                      <p class="text-slate-700 text-[11px]">{{ m.business_data.summary }}</p>
+                      <div v-if="m.business_data.options && m.business_data.options.length > 0" class="space-y-1.5 pt-1">
+                        <button 
+                          v-for="(opt, oidx) in m.business_data.options" 
+                          :key="oidx"
+                          @click="sendQuickPrompt(opt.quick_prompt || opt.title)"
+                          class="w-full text-left p-2 text-xs bg-white hover:bg-sky-100/70 border border-sky-200 hover:border-sky-300 rounded-lg text-slate-800 transition flex items-center justify-between cursor-pointer group shadow-2xs"
+                        >
+                          <span class="font-medium text-[11px] group-hover:text-sky-900">{{ opt.title }}</span>
+                          <span class="text-sky-600 font-bold text-xs">选择 ➔</span>
+                        </button>
+                      </div>
                     </div>
 
                   </div>
@@ -7963,16 +7980,17 @@
 
 
 
-        const roleLabels = {
-
+                const roleLabels = {
+          platform_admin: '平台超管',
+          tenant_admin: '企业超管',
+          knowledge_master: '知识主管',
+          qa_supervisor: '质检主管',
+          service_agent: '技术坐席',
+          end_user: '终端客户',
           user: '普通客户',
-
           tech_agent: '技术客服',
-
           admin: '超级管理员',
-
           operator: '知识运营'
-
         };
 
         const roleLabel = computed(() => {
@@ -7995,40 +8013,33 @@
 
 
 
-        const hasMenuPermission = (menuKey) => {
-
-          if (currentRole.value === 'admin') {
-
+                const hasMenuPermission = (menuKey) => {
+          const r = currentRole.value;
+          // 平台超管：租户、大盘、知识库、对话、BadCase、数据源同步
+          if (r === 'platform_admin' || r === 'admin') {
             return true;
-
           }
-
-          if (currentRole.value === 'operator') {
-
-            // 运营只能看到知识文档管理和badcase池
-
-            return menuKey === 'chunks' || menuKey === 'badcases' || menuKey === 'sync';
-
+          // 企业租户超管：对话巡检、租户知识库、知识采审、BadCase治理、运营报表、数据源同步
+          if (r === 'tenant_admin') {
+            return ['chat', 'kb', 'chunks', 'badcases', 'reports', 'sync'].includes(menuKey);
           }
-
-          if (currentRole.value === 'tech_agent') {
-
-            // 客服只能看到对话和知识文档管理
-
-            return menuKey === 'chat' || menuKey === 'chunks';
-
+          // 知识库架构主管：知识库调优、文档采审终审、BadCase聚类闭环、外部数据源同步、质量大盘
+          if (r === 'knowledge_master' || r === 'operator') {
+            return ['chunks', 'badcases', 'sync', 'kb', 'reports'].includes(menuKey);
           }
-
-          if (currentRole.value === 'user') {
-
-            // 普通客户只能看到对话
-
-            return menuKey === 'chat';
-
+          // 质检主管 / 客服组长：全线会话巡查、BadCase池审核、运营与绩效大盘
+          if (r === 'qa_supervisor') {
+            return ['chat', 'badcases', 'reports'].includes(menuKey);
           }
-
+          // 一线技术坐席：在线接待、360°画像排错、提报知识草稿
+          if (r === 'service_agent' || r === 'tech_agent') {
+            return ['chat', 'chunks'].includes(menuKey);
+          }
+          // 终端客户：智能问答
+          if (r === 'end_user' || r === 'user') {
+            return ['chat'].includes(menuKey);
+          }
           return false;
-
         };
 
 
@@ -8082,9 +8093,7 @@
 
 
         const canManageHumanSession = computed(() => {
-
-          return currentRole.value === 'admin' || currentRole.value === 'tech_agent';
-
+          return ['admin', 'platform_admin', 'tenant_admin', 'qa_supervisor', 'service_agent', 'tech_agent'].includes(currentRole.value);
         });
 
 

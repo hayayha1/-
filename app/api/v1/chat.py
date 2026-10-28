@@ -17,10 +17,26 @@ from app.schemas.chat import (
     ChatSessionCreate,
     ChatSessionResponse,
     ChatMessageResponse,
-    TransferHumanRequest
+    TransferHumanRequest,
+    QAReviewRequest,
+    ReassignSessionRequest
 )
 from app.workflow.customer_service_graph import customer_service_graph
-from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_USER, ROLE_TECH_AGENT, ROLE_ADMIN, AGENT_PRODUCT_MAP
+from app.core.auth import (
+    get_current_user, 
+    CurrentUser, 
+    require_roles, 
+    ROLE_USER, 
+    ROLE_TECH_AGENT, 
+    ROLE_ADMIN,
+    ROLE_PLATFORM_ADMIN,
+    ROLE_TENANT_ADMIN,
+    ROLE_KNOWLEDGE_MASTER,
+    ROLE_QA_SUPERVISOR,
+    ROLE_SERVICE_AGENT,
+    ROLE_END_USER,
+    AGENT_PRODUCT_MAP
+)
 
 router = APIRouter(prefix="/chat", tags=["智能客服与会话管理"])
 
@@ -31,12 +47,12 @@ PRODUCT_DEFAULT_AGENT = {
     "FIN_AI": "agent_1030"
 }
 
-# 1. 查询会话列表 (普通用户仅看本人会话，技术客服仅看分配给自己的进行中会话，超管可查看全局包括历史会话；运营角色无权访问)
+# 1. 查询会话列表 (普通用户仅看本人会话，技术客服仅看分配给自己的进行中会话，质检主管/超管可巡查全局会话)
 @router.get(
     "/sessions", 
     response_model=List[ChatSessionResponse], 
     summary="查询多客户客服会话列表",
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_USER]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_QA_SUPERVISOR, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT, ROLE_END_USER, ROLE_USER]))]
 )
 async def list_chat_sessions(
     product_code: Optional[str] = Query(None, description="产品线筛选"),
@@ -49,15 +65,15 @@ async def list_chat_sessions(
     stmt = stmt.where(ChatSession.tenant_id == target_tenant)
 
     # 普通客户行级隔离
-    if current_user.role == ROLE_USER:
+    if current_user.is_end_user:
         stmt = stmt.where(ChatSession.customer_id == current_user.user_id)
-    # 技术客服行级隔离：只能看到分配给自己的活跃会话（不看已结单历史），超管才看历史会话
-    elif current_user.role == ROLE_TECH_AGENT:
+    # 技术客服行级隔离：只能看到分配给自己的活跃会话（不看已结单历史），质检主管/超管才看全量巡检
+    elif current_user.is_service_agent:
         stmt = stmt.where(
             ChatSession.assigned_agent == current_user.user_id,
             ChatSession.status != "CLOSED"
         )
-    # 超级管理员角色：若传了 status 按 status 查，否则可看全量会话
+    # 质检主管、企业超管与平台管理员：可巡检本企业全量历史与进行中会话
 
     if product_code:
         stmt = stmt.where(ChatSession.product_code == product_code)
@@ -276,6 +292,7 @@ async def chat_interaction(
         "kb_id": kb.id,
         "product_code": payload.product_code,
         "customer_id": payload.customer_id,
+        "session_id": session.id,
         "raw_query": payload.query,
         "cleaned_query": "",
         "rewritten_query": "",
@@ -491,7 +508,7 @@ async def hangup_human_service(session_id: str = Query(...), db: AsyncSession = 
 @router.post(
     "/finish-human", 
     summary="结束人工客服会话返回AI",
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_QA_SUPERVISOR, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT]))]
 )
 async def finish_human_service(session_id: str = Query(...), db: AsyncSession = Depends(get_db)):
     session = await db.get(ChatSession, session_id)
@@ -513,12 +530,130 @@ async def finish_human_service(session_id: str = Query(...), db: AsyncSession = 
     await db.commit()
     return {"status": "AI_SERVICE", "message": "已恢复AI客服接待"}
 
-# 8. 客户画像数据接口（仅技术客服和超管可见与管理）
+# 7.1 质检主管质检打分与评语
+@router.post(
+    "/sessions/{session_id}/qa-review",
+    summary="质检主管对客服会话进行质检评分与打标",
+    dependencies=[Depends(require_roles([ROLE_QA_SUPERVISOR, ROLE_TENANT_ADMIN, ROLE_ADMIN]))]
+)
+async def qa_review_session(
+    session_id: str,
+    payload: QAReviewRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    session.qa_score = payload.score
+    session.qa_feedback = payload.feedback
+    session.qa_tags = payload.tags
+    session.qa_inspector = current_user.username or current_user.user_id
+
+    # 若勾选一键推送至 BadCase 池
+    created_badcase_id = None
+    if payload.push_to_badcase:
+        import uuid
+        from app.services.badcase_service import badcase_service
+        msg_stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session.id)
+            .order_by(desc(ChatMessage.created_at))
+            .limit(1)
+        )
+        last_msg = (await db.execute(msg_stmt)).scalars().first()
+        query_text = last_msg.raw_query if (last_msg and last_msg.raw_query) else (session.last_message or "质检抽检不合格会话")
+        answer_text = last_msg.content if last_msg else "未抓取到AI回复"
+
+        from app.models.bad_case import BadCase
+        kb_stmt = select(KnowledgeBase.id).where(KnowledgeBase.product_code == session.product_code)
+        kb_id = (await db.execute(kb_stmt)).scalars().first() or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
+
+        case_obj = BadCase(
+            id=str(uuid.uuid4()),
+            tenant_id=session.tenant_id,
+            product_code=session.product_code,
+            kb_id=kb_id,
+            session_id=session.id,
+            message_id=last_msg.id if last_msg else str(uuid.uuid4()),
+            case_type="QA_REVIEW",
+            user_query=query_text,
+            user_feedback_comment=f"质检主管质检不合格({payload.score}分): {payload.feedback or ''} 标签: {','.join(payload.tags)}",
+            ai_raw_response=answer_text,
+            recall_sources=last_msg.sources if last_msg and last_msg.sources else [],
+            confidence_score=last_msg.confidence_score if last_msg else 0.0,
+            status="PENDING"
+        )
+        try:
+            rc_code, rc_name, rc_reason = await badcase_service.diagnose_case_root_cause(db, case_obj)
+            case_obj.root_cause_code = rc_code
+            case_obj.root_cause_name = rc_name
+            case_obj.root_cause_reason = rc_reason
+        except Exception:
+            pass
+
+        db.add(case_obj)
+        created_badcase_id = case_obj.id
+
+    await db.commit()
+    await db.refresh(session)
+    return {
+        "message": "质检评分已完成并保存",
+        "session_id": session.id,
+        "qa_score": session.qa_score,
+        "qa_feedback": session.qa_feedback,
+        "qa_tags": session.qa_tags,
+        "pushed_to_badcase": payload.push_to_badcase,
+        "badcase_id": created_badcase_id
+    }
+
+# 7.2 质检主管或管理员改派调度坐席
+@router.post(
+    "/sessions/{session_id}/reassign",
+    summary="质检主管或企业管理员强制改派客服坐席",
+    dependencies=[Depends(require_roles([ROLE_QA_SUPERVISOR, ROLE_TENANT_ADMIN, ROLE_ADMIN]))]
+)
+async def reassign_session_agent(
+    session_id: str,
+    payload: ReassignSessionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    old_agent = session.assigned_agent
+    session.assigned_agent = payload.target_agent
+    session.status = "HUMAN_CONNECTED"
+
+    reason_text = f"（原因: {payload.reason}）" if payload.reason else ""
+    sys_msg = ChatMessage(
+        session_id=session.id,
+        role="system",
+        content=f"质检主管已将会话由客服【{old_agent or '系统待分配'}】重新改派调度至资深专家坐席【{payload.target_agent}】协助处理{reason_text}。",
+        reply_type="SYSTEM"
+    )
+    db.add(sys_msg)
+    session.last_message = f"[坐席已改派为 {payload.target_agent}]"
+    session.last_message_at = datetime.now()
+
+    await db.commit()
+    await db.refresh(session)
+    return {
+        "message": f"会话已成功改派给坐席 {payload.target_agent}",
+        "session_id": session.id,
+        "assigned_agent": session.assigned_agent,
+        "status": session.status
+    }
+
+# 8. 客户画像数据接口（多角色权限分层与脱敏）
 DEFAULT_CUSTOMER_PROFILES: Dict[str, Dict[str, Any]] = {
     "U10086": {
         "user_id": "U10086",
         "name": "张先生",
-        "phone": "138****5678",
+        "phone": "13800135678",
         "channel": "微信小程序",
         "vip_level": "企业VIP",
         "recent_order": {
@@ -541,24 +676,30 @@ class UserProfileUpdate(BaseModel):
     pending_issue: Optional[str] = None
     tags: Optional[List[str]] = None
 
-@router.get("/user-profile", summary="获取客户画像数据（仅技术客服与超管可见）")
+@router.get("/user-profile", summary="获取客户画像数据（带角色权限与数据脱敏）")
 async def get_user_profile(
     customer_id: Optional[str] = Query(None, description="客户ID/编号"),
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
-    技术客服与超级管理员专属：获取客户360度全景画像数据
+    客户画像360度数据读取权限矩阵：
+    - 平台超管、知识主管：无权查阅客户个人敏感隐私（403拦截）
+    - 终端客户：仅能查询本人画像
+    - 质检主管、超管：具备完整调阅权限
+    - 一线技术坐席、企业超管：具备针对性调阅权限（手机号合规脱敏）
     """
-    if current_user.role not in [ROLE_ADMIN, ROLE_TECH_AGENT]:
-        raise HTTPException(status_code=403, detail="无权查阅客户画像敏感数据")
+    # 平台超管、知识主管及终端客户无权查阅客户全景画像
+    if current_user.is_end_user or current_user.role in [ROLE_PLATFORM_ADMIN, ROLE_KNOWLEDGE_MASTER]:
+        raise HTTPException(status_code=403, detail="权限不足：该角色无权查阅客户画像敏感数据")
 
     cid = (customer_id or "U10086").strip()
-    profile = DEFAULT_CUSTOMER_PROFILES.get(cid)
-    if not profile:
-        profile = {
+
+    profile_raw = DEFAULT_CUSTOMER_PROFILES.get(cid)
+    if not profile_raw:
+        profile_raw = {
             "user_id": cid if cid.startswith("U") else "U10086",
             "name": "张先生" if cid in ["user_001", "U10086"] else f"客户·{cid}",
-            "phone": "138****5678",
+            "phone": "13800135678",
             "channel": "微信小程序",
             "vip_level": "企业VIP",
             "recent_order": {
@@ -569,22 +710,33 @@ async def get_user_profile(
             "pending_issue": "昨日反馈设备无法连接WiFi，等待固件更新",
             "tags": ["技术小白", "急躁型"]
         }
+
+    profile = dict(profile_raw)
+
+    # 针对一线客服坐席和企业超管，电话号码进行合规掩码脱敏
+    if current_user.is_service_agent or current_user.role == ROLE_TENANT_ADMIN:
+        phone_str = str(profile.get("phone", ""))
+        if len(phone_str) == 11 and "****" not in phone_str:
+            profile["phone"] = f"{phone_str[:3]}****{phone_str[7:]}"
+        elif len(phone_str) > 4 and "****" not in phone_str:
+            profile["phone"] = f"{phone_str[:3]}****"
+
     return profile
 
-@router.put("/user-profile", summary="更新客户画像数据（仅技术客服与超管可用）")
+@router.put("/user-profile", summary="更新客户画像数据")
 async def update_user_profile(
     payload: UserProfileUpdate,
     customer_id: Optional[str] = Query("U10086", description="客户ID"),
     current_user: CurrentUser = Depends(get_current_user)
 ):
-    if current_user.role not in [ROLE_ADMIN, ROLE_TECH_AGENT]:
+    if current_user.role in [ROLE_PLATFORM_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_END_USER, ROLE_USER]:
         raise HTTPException(status_code=403, detail="无权修改客户画像")
 
     cid = customer_id or "U10086"
     profile = DEFAULT_CUSTOMER_PROFILES.setdefault(cid, {
         "user_id": "U10086",
         "name": "张先生",
-        "phone": "138****5678",
+        "phone": "13800135678",
         "channel": "微信小程序",
         "vip_level": "企业VIP",
         "recent_order": {

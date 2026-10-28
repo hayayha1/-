@@ -18,13 +18,25 @@ from app.schemas.document import (
 )
 from app.services.chunking.splitter import DocumentChunker
 from app.services.model_service import model_service
-from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_OPERATOR
+from app.core.auth import (
+    get_current_user, 
+    CurrentUser, 
+    require_roles, 
+    ROLE_ADMIN, 
+    ROLE_TECH_AGENT, 
+    ROLE_OPERATOR,
+    ROLE_PLATFORM_ADMIN,
+    ROLE_TENANT_ADMIN,
+    ROLE_KNOWLEDGE_MASTER,
+    ROLE_QA_SUPERVISOR,
+    ROLE_SERVICE_AGENT
+)
 
-# 知识文档与FAQ管理模块对 超级管理员、运营人员 与 技术客服 开放
+# 知识文档与FAQ管理模块对 管理员、知识主管 与 坐席 开放
 router = APIRouter(
     prefix="/documents", 
     tags=["知识文档与FAQ管理"],
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_OPERATOR]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT, ROLE_OPERATOR]))]
 )
 
 async def index_document_chunks(doc: Document, db: AsyncSession) -> int:
@@ -116,9 +128,9 @@ async def upload_document(
     except UnicodeDecodeError:
         content_text = content_bytes.decode("gbk", errors="ignore")
 
-    # 审核流逻辑：技术客服或运营人员提交设为 PENDING_REVIEW 待审核；超管直接 ACTIVE
-    is_admin = (current_user.role == ROLE_ADMIN)
-    doc_status = "ACTIVE" if is_admin else "PENDING_REVIEW"
+    # 采审分离逻辑：一线技术坐席(service_agent)提交设为 PENDING_REVIEW 待审核草稿；知识主管/企业超管创建直接 ACTIVE
+    is_authorizer = current_user.role in [ROLE_PLATFORM_ADMIN, ROLE_TENANT_ADMIN, ROLE_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_OPERATOR]
+    doc_status = "ACTIVE" if is_authorizer else "PENDING_REVIEW"
 
     doc = Document(
         kb_id=kb_id,
@@ -152,7 +164,7 @@ async def upload_document(
     await db.refresh(doc)
     return doc
 
-@router.post("", response_model=DocumentResponse, summary="新增知识文档 (技术客服提交需超管审核，超管创建直接生效)")
+@router.post("", response_model=DocumentResponse, summary="新增知识文档 (技术坐席提交需主管审核，主管/超管创建直接生效)")
 async def create_document(
     payload: DocumentCreate, 
     current_user: CurrentUser = Depends(get_current_user),
@@ -162,17 +174,17 @@ async def create_document(
     if not kb:
         raise HTTPException(status_code=404, detail="目标知识库不存在")
 
-    if current_user.role == ROLE_TECH_AGENT:
+    if current_user.is_service_agent:
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         if kb.product_code != allowed_product:
             raise HTTPException(status_code=403, detail="权限不足：您不能向非本产品归属的知识库创建文档")
-    elif current_user.role == ROLE_OPERATOR:
+    elif current_user.is_knowledge_master:
         allowed_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
-        if kb.id != allowed_kb:
+        if kb.id != allowed_kb and current_user.role == ROLE_OPERATOR:
             raise HTTPException(status_code=403, detail="权限不足：运营人员只能向自身负责的知识库创建文档")
 
-    is_admin = (current_user.role == ROLE_ADMIN)
-    doc_status = "ACTIVE" if is_admin else "PENDING_REVIEW"
+    is_authorizer = current_user.role in [ROLE_PLATFORM_ADMIN, ROLE_TENANT_ADMIN, ROLE_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_OPERATOR]
+    doc_status = "ACTIVE" if is_authorizer else "PENDING_REVIEW"
 
     doc = Document(
         kb_id=payload.kb_id,
@@ -205,7 +217,7 @@ async def create_document(
     await db.refresh(doc)
     return doc
 
-@router.post("/faq/batch", summary="FAQ 结构化批量导入 (技术客服提交进入审核流)")
+@router.post("/faq/batch", summary="FAQ 结构化批量导入 (技术坐席提交进入审核流)")
 async def batch_import_faq(
     payload: FAQBatchImportRequest, 
     current_user: CurrentUser = Depends(get_current_user),
@@ -215,17 +227,18 @@ async def batch_import_faq(
     if not kb:
         raise HTTPException(status_code=404, detail="目标知识库不存在")
 
-    if current_user.role == ROLE_TECH_AGENT:
+    if current_user.is_service_agent:
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         if kb.product_code != allowed_product:
             raise HTTPException(status_code=403, detail="权限不足：您不能向非本产品归属的知识库录入FAQ")
-    elif current_user.role == ROLE_OPERATOR:
+    elif current_user.is_knowledge_master:
         allowed_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
-        if kb.id != allowed_kb:
+        if kb.id != allowed_kb and current_user.role == ROLE_OPERATOR:
             raise HTTPException(status_code=403, detail="权限不足：运营人员只能向自身负责的知识库录入FAQ")
 
-    is_admin = (current_user.role == ROLE_ADMIN)
-    doc_status = "ACTIVE" if is_admin else "PENDING_REVIEW"
+    # 若是新角色 service_agent，强制审核流；若是兼容角色 tech_agent 或管理员/主管则 ACTIVE
+    is_draft_agent = (current_user.role == ROLE_SERVICE_AGENT)
+    doc_status = "PENDING_REVIEW" if is_draft_agent else "ACTIVE"
 
     doc = Document(
         kb_id=payload.kb_id,
@@ -439,12 +452,12 @@ async def update_document(
     await db.refresh(doc)
     return doc
 
-# ================= 知识文档审核流 (仅超级管理员可执行) =================
+# ================= 知识文档审核流 (知识主管/企业超管/平台超管) =================
 
 @router.post(
     "/{doc_id}/approve", 
-    summary="超级管理员审核通过知识文档 (触发自动切片与向量入库生效)",
-    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+    summary="知识架构主管/企业超管审核通过知识文档 (触发自动切片与向量入库生效)",
+    dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))]
 )
 async def approve_document(
     doc_id: str, 
@@ -472,8 +485,8 @@ async def approve_document(
 
 @router.post(
     "/{doc_id}/reject", 
-    summary="超级管理员驳回知识文档",
-    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+    summary="知识架构主管/企业超管驳回知识文档",
+    dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))]
 )
 async def reject_document(
     doc_id: str, 
@@ -486,7 +499,7 @@ async def reject_document(
         raise HTTPException(status_code=404, detail="文档不存在")
 
     doc.status = "REJECTED"
-    doc.updated_by = f"admin(已驳回: {reason})"
+    doc.updated_by = f"{current_user.username or '主管'}(已驳回: {reason})"
 
     # 清除切片（如果有）
     await db.execute(delete(DocumentChunk).where(DocumentChunk.doc_id == doc.id))
@@ -549,7 +562,7 @@ async def rollback_document_version(
         db=db
     )
 
-@router.delete("/{doc_id}", summary="删除文档（级联清除所有切片与版本）", dependencies=[Depends(require_roles([ROLE_ADMIN]))])
+@router.delete("/{doc_id}", summary="删除文档（级联清除所有切片与版本）", dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))])
 async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)):
     doc = await db.get(Document, doc_id)
     if not doc:

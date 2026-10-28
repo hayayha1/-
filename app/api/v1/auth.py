@@ -6,6 +6,12 @@ from app.core.auth import (
     ROLE_TECH_AGENT, 
     ROLE_USER, 
     ROLE_OPERATOR,
+    ROLE_PLATFORM_ADMIN,
+    ROLE_TENANT_ADMIN,
+    ROLE_KNOWLEDGE_MASTER,
+    ROLE_QA_SUPERVISOR,
+    ROLE_SERVICE_AGENT,
+    ROLE_END_USER,
     AGENT_PRODUCT_MAP,
     OPERATOR_KB_MAP,
     OPERATOR_PRODUCT_MAP
@@ -31,6 +37,63 @@ class LoginResponse(BaseModel):
 
 # 预置账号字典
 PRESET_USERS = {
+    # 两级六角色新标准账号
+    "platform_admin": {
+        "passwords": ["admin123", "123456", "platform_admin"],
+        "role": ROLE_PLATFORM_ADMIN,
+        "display_name": "👑 SaaS平台超级管理员",
+        "user_id": "admin_platform",
+        "tenant_id": "tenant_default",
+        "product_code": None,
+        "assigned_kb_id": None
+    },
+    "tenant_admin": {
+        "passwords": ["admin123", "123456", "tenant_admin"],
+        "role": ROLE_TENANT_ADMIN,
+        "display_name": "🏢 企业租户管理员",
+        "user_id": "admin_tenant",
+        "tenant_id": "tenant_default",
+        "product_code": None,
+        "assigned_kb_id": None
+    },
+    "knowledge_master": {
+        "passwords": ["km123", "123456", "ops123", "knowledge_master"],
+        "role": ROLE_KNOWLEDGE_MASTER,
+        "display_name": "🧠 知识库架构主管",
+        "user_id": "km_001",
+        "tenant_id": "tenant_default",
+        "product_code": "SAAS_CLOUD",
+        "assigned_kb_id": "b34fb60a-392c-4bb2-9e10-57539b37fed2"
+    },
+    "qa_supervisor": {
+        "passwords": ["qa123", "123456", "qa_supervisor"],
+        "role": ROLE_QA_SUPERVISOR,
+        "display_name": "🔍 质检主管 / 客服组长",
+        "user_id": "qa_001",
+        "tenant_id": "tenant_default",
+        "product_code": None,
+        "assigned_kb_id": None
+    },
+    "service_agent": {
+        "passwords": ["agent123", "123456", "tech123", "service_agent"],
+        "role": ROLE_SERVICE_AGENT,
+        "display_name": "👩‍💼 一线技术客服坐席",
+        "user_id": "agent_1028",
+        "tenant_id": "tenant_default",
+        "product_code": "SAAS_CLOUD",
+        "assigned_kb_id": None
+    },
+    "end_user": {
+        "passwords": ["user123", "123456", "end_user"],
+        "role": ROLE_END_USER,
+        "display_name": "👤 终端消费者 / 用户",
+        "user_id": "user_001",
+        "tenant_id": "tenant_default",
+        "product_code": None,
+        "assigned_kb_id": None
+    },
+
+    # 兼容历史账号
     "admin": {
         "passwords": ["admin123", "123456", "admin"],
         "role": ROLE_ADMIN,
@@ -122,7 +185,7 @@ async def login(payload: LoginRequest):
         conf = PRESET_USERS[u]
         if p in conf["passwords"]:
             tenant_id = conf.get("tenant_id", "tenant_default")
-            is_platform_admin = (conf["role"] == ROLE_ADMIN)
+            is_platform_admin = (conf["role"] in [ROLE_PLATFORM_ADMIN, ROLE_ADMIN])
             tenant_name = "平台全局管理" if is_platform_admin else ("极速零售集团" if tenant_id == "tenant_retail_a" else "云创智能科技")
             return LoginResponse(
                 user_id=conf["user_id"],

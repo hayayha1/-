@@ -37,7 +37,7 @@ async def seed_demo_data():
                 contact_phone="400-888-9999",
                 contact_email="admin@yunchuang.ai",
                 max_seats=30,
-                max_kbs=15,
+                max_kbs=50,
                 monthly_token_quota=5000000,
                 used_tokens=142600,
                 monthly_query_quota=100000,
