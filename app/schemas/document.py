@@ -20,6 +20,8 @@ class DocumentCreate(BaseModel):
     doc_type: str = Field(..., pattern="^(FAQ|MD|TXT)$", description="文档类型")
     content: str = Field(..., min_length=1, description="文档原始文本内容")
     priority: int = Field(default=1, ge=1, le=5, description="优先级 1-5")
+    source_origin: Optional[str] = Field("MANUAL_UPLOAD", description="知识来源: MANUAL_UPLOAD, FEISHU, YUQUE, WEB")
+    source_id: Optional[str] = Field(None, description="外部数据源ID")
     created_by: Optional[str] = Field("admin")
 
 class DocumentUpdate(BaseModel):

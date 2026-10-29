@@ -1090,7 +1090,7 @@
 
           <!-- 2.1 客户会话列表 (仅 技术客服 和 超管 可见；普通用户删除对话列表，每次开新对话) -->
 
-          <div v-if="currentRole !== 'user'" class="w-72 border-r border-slate-200 bg-slate-50 flex flex-col h-full flex-shrink-0">
+          <div v-if="currentRole !== 'user' && currentRole !== 'end_user'" class="w-72 border-r border-slate-200 bg-slate-50 flex flex-col h-full flex-shrink-0">
 
             <div class="p-4 border-b border-slate-200 bg-white space-y-2">
 
@@ -1368,7 +1368,7 @@
 
                   <p class="text-[11px] text-slate-400 font-mono">
 
-                    {{ currentRole === 'user' ? '在线企业客服 · 专属新会话已开启' : `客户ID: ${currentSession?.customer_id} | 产品: ${currentSession?.product_code}` }}
+                    {{ (currentRole === 'user' || currentRole === 'end_user') ? '在线企业专属智能客服 · 7x24小时全天候服务' : ('客户ID: ' + (currentSession ? currentSession.customer_id : '未选择') + ' | 业务线: ' + (currentSession ? currentSession.product_code : (currentProductCode || '通用'))) }}
 
                   </p>
 
@@ -1568,33 +1568,30 @@
 
               <!-- 动态消息流 -->
 
-              <div 
-
-                v-for="(m, idx) in messageList" 
-
-                :key="m.id || idx" 
-
-                class="flex gap-3"
-
-                :class="m.role === 'user' ? 'justify-end' : 'justify-start'"
-
-              >
-
-                <!-- 头像：系统/助手/人工客服 -->
-
-                <div 
-
-                  v-if="m.role !== 'user'" 
-
-                  class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-sm"
-
-                  :class="m.role === 'human_agent' ? 'bg-amber-600 text-white' : (m.role === 'system' ? 'bg-slate-600 text-white' : 'bg-indigo-600 text-white')"
-
-                >
-
-                  {{ m.role === 'human_agent' ? '👩‍💼' : (m.role === 'system' ? '🔔' : 'AI') }}
-
+                            <!-- 系统通知小字居中展示，无独立账号头像 -->
+              <template v-for="(m, idx) in messageList" :key="m.id || idx">
+                <div v-if="m.role === 'system'" class="flex justify-center my-3 w-full">
+                  <div class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-slate-500 text-[11px] shadow-2xs max-w-lg text-center">
+                    <span>ℹ️</span>
+                    <span>{{ m.content }}</span>
+                    <span class="text-[10px] text-slate-400 font-mono ml-1">{{ (m.created_at || '').slice(11, 16) }}</span>
+                  </div>
                 </div>
+
+                <!-- 正常会话消息（客户、AI、坐席） -->
+                <div 
+                  v-else
+                  class="flex gap-3"
+                  :class="m.role === 'user' ? 'justify-end' : 'justify-start'"
+                >
+                  <!-- 头像：助手/人工客服 -->
+                  <div 
+                    v-if="m.role !== 'user'" 
+                    class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-sm"
+                    :class="m.role === 'human_agent' ? 'bg-amber-600 text-white' : 'bg-indigo-600 text-white'"
+                  >
+                    {{ m.role === 'human_agent' ? '👩‍💼' : 'AI' }}
+                  </div>
 
 
 
@@ -2174,6 +2171,7 @@
                 </div>
 
               </div>
+              </template>
 
 
 
@@ -2777,7 +2775,7 @@
 
               <select v-if="chunkViewTab === 'docs'" v-model="filterDocType" @change="refreshDocs" class="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
 
-                <option value="">全部类型</option>
+                <option value="">全部格式</option>
 
                 <option value="MD">Markdown</option>
 
@@ -2785,6 +2783,15 @@
 
                 <option value="FAQ">FAQ问答库</option>
 
+              </select>
+
+              <!-- 知识来源筛选 (纳入外部数据源同步) -->
+              <select v-if="chunkViewTab === 'docs'" v-model="filterDocSource" @change="refreshDocs" class="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium">
+                <option value="">全部知识来源 (All)</option>
+                <option value="MANUAL_UPLOAD">💻 本地录入 / 上传</option>
+                <option value="FEISHU">🦅 飞书知识库</option>
+                <option value="YUQUE">🦜 语雀知识库</option>
+                <option value="WEB">🌐 网页采集同步</option>
               </select>
 
 
@@ -2833,6 +2840,8 @@
 
                   <th class="py-3 px-4">归属知识库</th>
 
+                  <th class="py-3 px-4">知识来源</th>
+
                   <th class="py-3 px-4">审核状态</th>
 
                   <th class="py-3 px-4">格式</th>
@@ -2841,9 +2850,7 @@
 
                   <th class="py-3 px-4">版本号</th>
 
-                  <th class="py-3 px-4">提交人</th>
-
-                  <th class="py-3 px-4">更新时间</th>
+                  <th class="py-3 px-4">上传/同步时间</th>
 
                   <th class="py-3 px-4 text-right">操作</th>
 
@@ -2871,6 +2878,22 @@
 
                     {{ getKbName(doc.kb_id) }}
 
+                  </td>
+
+                  <!-- 知识来源列 -->
+                  <td class="py-3 px-4">
+                    <span v-if="doc.source_origin === 'FEISHU'" class="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                      <span>🦅</span> <span>飞书文档</span>
+                    </span>
+                    <span v-else-if="doc.source_origin === 'YUQUE'" class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                      <span>🦜</span> <span>语雀文档</span>
+                    </span>
+                    <span v-else-if="doc.source_origin === 'WEB'" class="inline-flex items-center gap-1 text-[10px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md">
+                      <span>🌐</span> <span>网页采集</span>
+                    </span>
+                    <span v-else class="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                      <span>💻</span> <span>本地录入</span>
+                    </span>
                   </td>
 
                   <!-- 审核状态列 -->
@@ -2917,11 +2940,17 @@
 
                   <td class="py-3 px-4 font-mono font-bold text-indigo-600">v{{ doc.version }}</td>
 
-                  <td class="py-3 px-4 text-slate-600">{{ doc.created_by || 'admin' }}</td>
-
-                  <td class="py-3 px-4 text-slate-400 font-mono">{{ (doc.updated_at || '').slice(0, 16).replace('T', ' ') }}</td>
+                  <td class="py-3 px-4 text-slate-500 font-mono text-[11px]">{{ (doc.updated_at || doc.created_at || '').slice(0, 16).replace('T', ' ') }}</td>
 
                   <td class="py-3 px-4 text-right space-x-1 whitespace-nowrap">
+                    <!-- 立即同步操作按钮 -->
+                    <button 
+                      @click="syncDocumentItem(doc)" 
+                      class="text-sky-700 hover:text-sky-900 font-bold px-2 py-1 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-md transition cursor-pointer text-xs"
+                      title="立即触发增量同步与重新切片"
+                    >
+                      🔄 立即同步
+                    </button>
 
                     <!-- 超级管理员审核操作 -->
 
@@ -3119,8 +3148,22 @@
 
           <!-- 子 Tab 1: 知识库列表 -->
           <div v-if="kbTab === 'kbs'" class="space-y-4">
+            <!-- 知识库按产品分组筛选栏 -->
+            <div class="flex items-center justify-between bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs">
+              <div class="flex items-center gap-3">
+                <span class="text-xs font-bold text-slate-700">按产品分组查询:</span>
+                <select v-model="filterKbProductGroup" class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-700">
+                  <option value="">全部产品分组 (All)</option>
+                  <option v-for="pl in (Array.isArray(productLinesList) ? productLinesList : [])" :key="pl.code" :value="pl.code">
+                    {{ pl.name }} ({{ pl.code }})
+                  </option>
+                </select>
+              </div>
+              <span class="text-xs text-slate-400">显示 {{ (filteredKbs || []).length }} / {{ (kbs || []).length }} 个知识库</span>
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              <div v-for="kb in kbs" :key="kb.id" class="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs hover:shadow-md transition space-y-4">
+              <div v-for="kb in filteredKbs" :key="kb.id" class="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs hover:shadow-md transition space-y-4">
                 <div class="flex items-start justify-between">
                   <div>
                     <div class="flex items-center gap-2">
@@ -3188,7 +3231,7 @@
             </div>
 
             <!-- 空状态 -->
-            <div v-if="kbs.length === 0" class="text-center py-16 bg-white border border-slate-200 rounded-3xl p-8">
+            <div v-if="(filteredKbs || []).length === 0" class="text-center py-16 bg-white border border-slate-200 rounded-3xl p-8">
               <span class="text-4xl">📂</span>
               <p class="text-slate-600 font-bold mt-2">暂无知识库</p>
               <p class="text-xs text-slate-400 mt-1">请点击右上角【新建知识库】挂载到当前产品线下开始入库</p>
@@ -6376,6 +6419,7 @@
 
           <!-- 坐席与运营人员列表表格 -->
           <div class="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-2xs">
+            <!-- 头部标题与统计 -->
             <div class="p-5 border-b border-slate-100 flex items-center justify-between">
               <div class="flex items-center gap-2">
                 <span class="font-bold text-slate-900 text-sm">成员列表</span>
@@ -6385,6 +6429,48 @@
                 <span>🔄</span>
                 <span>刷新</span>
               </button>
+            </div>
+
+            <!-- 三维组合查询过滤栏: 状态、产品分组、系统角色 -->
+            <div class="px-5 py-3.5 bg-slate-50/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div class="flex flex-wrap items-center gap-4">
+                <!-- 状态过滤 (上线、下线、空闲、接待中) -->
+                <div class="flex items-center gap-1.5">
+                  <span class="text-slate-500 font-medium">账号状态:</span>
+                  <select v-model="filterStaffStatus" @change="fetchStaffMembers" class="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 font-medium text-xs">
+                    <option value="">全部状态 (All)</option>
+                    <option value="ONLINE">🔵 上线</option>
+                    <option value="IDLE">🟢 空闲</option>
+                    <option value="BUSY">🟡 接待中</option>
+                    <option value="OFFLINE">⚪ 下线</option>
+                  </select>
+                </div>
+
+                <!-- 产品分组过滤 -->
+                <div class="flex items-center gap-1.5">
+                  <span class="text-slate-500 font-medium">产品分组:</span>
+                  <select v-model="filterStaffProduct" @change="fetchStaffMembers" class="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 font-medium text-xs">
+                    <option value="">全部产品线分组</option>
+                    <option v-for="pl in (Array.isArray(productLinesList) ? productLinesList : [])" :key="pl.code" :value="pl.code">
+                      {{ pl.name }} ({{ pl.code }})
+                    </option>
+                  </select>
+                </div>
+
+                <!-- 角色过滤 (知识运营和坐席) -->
+                <div class="flex items-center gap-1.5">
+                  <span class="text-slate-500 font-medium">角色分工:</span>
+                  <select v-model="filterStaffRole" @change="fetchStaffMembers" class="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 font-medium text-xs">
+                    <option value="">全部角色</option>
+                    <option value="service_agent">👩‍💼 坐席 (技术客服)</option>
+                    <option value="knowledge_master">🧠 知识运营 (主管/专员)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="text-[11px] text-slate-400">
+                支持 4 态调度与实时会话容量联动
+              </div>
             </div>
 
             <table class="w-full text-left border-collapse text-xs">
@@ -6439,10 +6525,50 @@
                     {{ staff.max_concurrent || 5 }} 会话
                   </td>
                   <td class="py-3.5 px-4">
-                    <span class="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
-                      <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      <span>正常</span>
-                    </span>
+                    <div class="flex items-center gap-2">
+                      <!-- 4态状态标签 -->
+                      <span 
+                        v-if="staff.status === 'BUSY'"
+                        class="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md"
+                      >
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                        <span>接待中 ({{ staff.active_sessions || 1 }}/{{ staff.max_concurrent || 5 }})</span>
+                      </span>
+                      <span 
+                        v-else-if="staff.status === 'IDLE'"
+                        class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md"
+                      >
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        <span>空闲</span>
+                      </span>
+                      <span 
+                        v-else-if="staff.status === 'ONLINE'"
+                        class="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-md"
+                      >
+                        <span class="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+                        <span>上线</span>
+                      </span>
+                      <span 
+                        v-else
+                        class="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md"
+                      >
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                        <span>下线</span>
+                      </span>
+
+                      <!-- 状态切换下拉 -->
+                      <select 
+                        @change="changeStaffStatus(staff, $event.target.value)" 
+                        class="text-[10px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-slate-600 cursor-pointer"
+                        :value="staff.status"
+                        title="切换坐席在线状态"
+                      >
+                        <option value="ONLINE">上线</option>
+                        <option value="IDLE">空闲</option>
+                        <option value="BUSY">接待中</option>
+                        <option value="OFFLINE">下线</option>
+                      </select>
+                    </div>
                   </td>
                   <td class="py-3.5 px-5 text-right">
                     <button 
@@ -7575,42 +7701,40 @@
 
 
 
-        <!-- 模式切换 Tab -->
-
-        <div class="grid grid-cols-2 p-1 bg-slate-100 rounded-xl text-xs font-medium">
-
+        <!-- 模式切换 Tab (整合外部知识源接入) -->
+        <div class="grid grid-cols-4 p-1 bg-slate-100 rounded-xl text-xs font-medium">
           <button 
-
             type="button"
-
-            @click="uploadDocTab = 'file'"
-
+            @click="uploadDocTab = 'file'; newDoc.source_origin = 'MANUAL_UPLOAD'"
             :class="uploadDocTab === 'file' ? 'bg-white text-indigo-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-700'"
-
             class="py-2 rounded-lg transition text-center cursor-pointer"
-
           >
-
-            📁 本地文件上传
-
+            📁 本地文件
           </button>
-
           <button 
-
             type="button"
-
-            @click="uploadDocTab = 'text'"
-
+            @click="uploadDocTab = 'text'; newDoc.source_origin = 'MANUAL_UPLOAD'"
             :class="uploadDocTab === 'text' ? 'bg-white text-indigo-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-700'"
-
             class="py-2 rounded-lg transition text-center cursor-pointer"
-
           >
-
-            ✍️ 在线手动录入
-
+            ✍️ 在线录入
           </button>
-
+          <button 
+            type="button"
+            @click="uploadDocTab = 'feishu'; newDoc.source_origin = 'FEISHU'"
+            :class="uploadDocTab === 'feishu' ? 'bg-white text-indigo-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-700'"
+            class="py-2 rounded-lg transition text-center cursor-pointer"
+          >
+            🦅 飞书同步
+          </button>
+          <button 
+            type="button"
+            @click="uploadDocTab = 'yuque'; newDoc.source_origin = 'YUQUE'"
+            :class="uploadDocTab === 'yuque' ? 'bg-white text-indigo-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-700'"
+            class="py-2 rounded-lg transition text-center cursor-pointer"
+          >
+            🦜 语雀同步
+          </button>
         </div>
 
 
@@ -7715,6 +7839,36 @@
 
             </div>
 
+          </div>
+
+          <!-- Tab 3: 飞书文档同步接入 -->
+          <div v-if="uploadDocTab === 'feishu'" class="space-y-3">
+            <div class="p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 text-xs">
+              <span class="font-bold">🦅 飞书文档增量同步:</span> 配置飞书空间文档或知识库链接，系统将以【飞书文档】来源沉淀知识切片并支持周期同步。
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">飞书文档名称</label>
+              <input v-model="newDoc.name" type="text" placeholder="例如：飞书开放平台产品与对接规范.docx" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">文档/知识库正文或同步摘要</label>
+              <textarea v-model="newDoc.content" rows="5" placeholder="粘贴飞书文档核心知识正文或同步导出内容..." class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-mono text-xs"></textarea>
+            </div>
+          </div>
+
+          <!-- Tab 4: 语雀知识库同步接入 -->
+          <div v-if="uploadDocTab === 'yuque'" class="space-y-3">
+            <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-xs">
+              <span class="font-bold">🦜 语雀文档增量同步:</span> 配置语雀知识库，系统将以【语雀知识库】来源入库并记录外部来源与同步时间。
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">语雀文档名称</label>
+              <input v-model="newDoc.name" type="text" placeholder="例如：语雀企业知识库服务指南.md" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">文档正文内容</label>
+              <textarea v-model="newDoc.content" rows="5" placeholder="粘贴语雀知识库文档正文..." class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-mono text-xs"></textarea>
+            </div>
           </div>
 
 
@@ -9143,8 +9297,28 @@
           </div>
         </div>
 
-        <!-- Tab 2: 注册普通用户（带企业选填项） -->
+        <!-- Tab 2: 注册用户（支持企业租户管理员 / 终端客户） -->
         <div v-else class="space-y-4">
+          <!-- 身份选择 Tabs -->
+          <div class="grid grid-cols-2 p-1 bg-slate-950/80 border border-slate-800 rounded-xl text-xs font-semibold">
+            <button 
+              type="button" 
+              @click="registerForm.account_type = 'enterprise'"
+              :class="registerForm.account_type === 'enterprise' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'"
+              class="py-2 rounded-lg transition text-center cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <span>🏢</span> <span>企业租户管理员</span>
+            </button>
+            <button 
+              type="button" 
+              @click="registerForm.account_type = 'end_user'"
+              :class="registerForm.account_type === 'end_user' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'"
+              class="py-2 rounded-lg transition text-center cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <span>👤</span> <span>终端普通客户</span>
+            </button>
+          </div>
+
           <div class="space-y-3">
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -9217,7 +9391,7 @@
             :disabled="isSubmittingRegister"
             class="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 disabled:opacity-50 text-white font-bold text-xs transition shadow-lg shadow-indigo-600/30 cursor-pointer"
           >
-            {{ isSubmittingRegister ? '正在创建普通账号...' : '立即注册并完成登录' }}
+            {{ isSubmittingRegister ? '正在创建账号...' : (registerForm.account_type === 'enterprise' ? '🏢 立即注册并进入企业工作台' : '👤 立即注册并开始咨询') }}
           </button>
         </div>
       </div>
@@ -9783,6 +9957,7 @@
         const registerError = ref('');
 
         const registerForm = reactive({
+          account_type: 'enterprise',
           username: '',
           password: '',
           company_name: '',
@@ -9828,6 +10003,7 @@
           registerError.value = '';
           try {
             const resp = await requestClient.post('/api/v1/auth/register', {
+              account_type: registerForm.account_type || (registerForm.company_name ? 'enterprise' : 'end_user'),
               username: registerForm.username,
               password: registerForm.password,
               company_name: registerForm.company_name || null,
@@ -9864,6 +10040,21 @@
                 pendingAction.value();
               }
               pendingAction.value = null;
+            } else {
+              // 核心修复：注册成功后根据身份角色准确跳转，企业用户进入企业控制台，客户进入单聊
+              currentView.value = 'app';
+              try { sessionStorage.setItem('smart_cs_view', 'app'); } catch(e) {}
+              if (data.role === 'tenant_admin') {
+                activeMenu.value = 'kb';
+                kbTab.value = 'product_lines';
+                await fetchProductLines();
+                await fetchKBs();
+                await fetchCurrentTenantProfile();
+                await fetchSessions();
+              } else if (data.role === 'end_user' || data.role === 'user') {
+                activeMenu.value = 'chat';
+                await initCustomerNewSession(true);
+              }
             }
           } catch (err) {
             registerError.value = err.response?.data?.detail || err.message || '注册失败，请检查表单信息';
@@ -10152,6 +10343,11 @@
         const activeMenu = ref('chat');
 
         const kbs = ref([]);
+        const filterKbProductGroup = ref('');
+        const filteredKbs = computed(() => {
+          if (!filterKbProductGroup.value) return kbs.value || [];
+          return (kbs.value || []).filter(kb => kb.product_code === filterKbProductGroup.value);
+        });
 
 
 
@@ -10190,9 +10386,9 @@
 
                 const hasMenuPermission = (menuKey) => {
           const r = currentRole.value;
-          // 平台超管：租户、大盘、知识库、对话、BadCase、数据源同步
+          // 平台超管应该只留运营数据和租户管理中心两个模块
           if (r === 'platform_admin' || r === 'admin') {
-            return true;
+            return ['tenants', 'reports'].includes(menuKey);
           }
           // 企业租户超管：对话巡检、产品线与知识库、知识文档、坐席与运营管理、企业设置、BadCase治理、运营报表、数据源同步
           if (r === 'tenant_admin') {
@@ -10518,6 +10714,7 @@
         const filterDocType = ref('');
 
         const filterDocStatus = ref('');
+        const filterDocSource = ref('');
 
         const filterDocId = ref('');
 
@@ -11469,6 +11666,8 @@
 
           if (filterDocStatus.value) url += `&status=${filterDocStatus.value}`;
 
+          if (filterDocSource.value) url += `&source_origin=${filterDocSource.value}`;
+
           if (searchKeyword.value) url += `&name=${encodeURIComponent(searchKeyword.value.trim())}`;
 
           try {
@@ -11546,6 +11745,22 @@
 
 
         // 超管审核流操作
+
+        const syncDocumentItem = async (doc) => {
+          try {
+            const res = await authFetch(`/api/v1/documents/${doc.id}/sync`, { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              alert(data.message || `文档【${doc.name}】已成功触发最新同步并刷新切片！`);
+              await refreshDocAndChunks();
+            } else {
+              const err = await res.json().catch(() => ({}));
+              alert(err.detail || '同步失败');
+            }
+          } catch (e) {
+            alert('同步文档异常: ' + e.message);
+          }
+        };
 
         const approveDoc = async (doc) => {
 
@@ -11742,6 +11957,10 @@
                 return alert('请填写文档标题和正文内容');
 
               }
+              if (uploadDocTab.value === 'feishu') newDoc.source_origin = 'FEISHU';
+              else if (uploadDocTab.value === 'yuque') newDoc.source_origin = 'YUQUE';
+              else if (uploadDocTab.value === 'web') newDoc.source_origin = 'WEB';
+              else newDoc.source_origin = 'MANUAL_UPLOAD';
 
               const res = await authFetch('/api/v1/documents', {
 
@@ -14370,7 +14589,7 @@
         // ================= 企业设置与坐席/产品线管理核心状态与方法 =================
         const productLinesList = ref([]);
         const productLinesLoading = ref(false);
-        const kbTab = ref('kbs'); // 'kbs' | 'product_lines'
+        const kbTab = ref('product_lines'); // 'kbs' | 'product_lines'
         const showCreateProductLineModal = ref(false);
         const newProductLineForm = reactive({
           code: '',
@@ -14381,6 +14600,9 @@
         const staffList = ref([]);
         const staffLoading = ref(false);
         const showCreateStaffModal = ref(false);
+        const filterStaffStatus = ref('');
+        const filterStaffProduct = ref('');
+        const filterStaffRole = ref('');
         const newStaffForm = reactive({
           username: '',
           real_name: '',
@@ -14491,7 +14713,12 @@
         const fetchStaffMembers = async () => {
           staffLoading.value = true;
           try {
-            const res = await authFetch('/api/v1/tenants/current/staff');
+            const params = new URLSearchParams();
+            if (filterStaffStatus.value) params.append('status', filterStaffStatus.value);
+            if (filterStaffProduct.value) params.append('product_code', filterStaffProduct.value);
+            if (filterStaffRole.value) params.append('role', filterStaffRole.value);
+            const queryStr = params.toString() ? '?' + params.toString() : '';
+            const res = await authFetch('/api/v1/tenants/current/staff' + queryStr);
             if (res.ok) {
               const data = await res.json();
               staffList.value = Array.isArray(data) ? data : (data.staff || []);
@@ -14536,6 +14763,24 @@
             }
           } catch (e) {
             alert('添加坐席异常: ' + e.message);
+          }
+        };
+
+        const changeStaffStatus = async (staff, newStatus) => {
+          try {
+            const res = await authFetch(`/api/v1/tenants/current/staff/${staff.user_id || staff.username}/status`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: newStatus })
+            });
+            if (res.ok) {
+              await fetchStaffMembers();
+            } else {
+              const err = await res.json().catch(() => ({}));
+              alert(err.detail || '修改坐席状态失败');
+            }
+          } catch (e) {
+            alert('修改状态异常: ' + e.message);
           }
         };
 
@@ -14908,6 +15153,10 @@
           staffLoading,
           showCreateStaffModal,
           newStaffForm,
+          filterStaffStatus,
+          filterStaffProduct,
+          filterStaffRole,
+          changeStaffStatus,
           fetchStaffMembers,
           submitCreateStaff,
           deleteStaffMemberItem,
@@ -15035,6 +15284,9 @@
           handleJumpToAssignedSession,
 
           kbs,
+          filterKbProductGroup,
+          filteredKbs,
+          filterDocSource,
 
           chunkViewTab,
 

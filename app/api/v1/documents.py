@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete, or_
@@ -100,6 +101,7 @@ async def upload_document(
     kb_id: str = Form(...),
     priority: int = Form(1),
     file: UploadFile = File(...),
+    source_origin: Optional[str] = Form("MANUAL_UPLOAD"),
     created_by: str = Form("system"),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -152,6 +154,7 @@ async def upload_document(
         priority=priority,
         version=1,
         status=doc_status,
+        source_origin=(source_origin or "MANUAL_UPLOAD").upper(),
         created_by=current_user.username or created_by,
         updated_by=current_user.username or created_by
     )
@@ -206,6 +209,8 @@ async def create_document(
         priority=payload.priority,
         version=1,
         status=doc_status,
+        source_origin=(payload.source_origin or "MANUAL_UPLOAD").upper(),
+        source_id=payload.source_id,
         created_by=current_user.username or payload.created_by or "system",
         updated_by=current_user.username or payload.created_by or "system"
     )
@@ -306,13 +311,14 @@ async def batch_import_faq(
         "chunk_count": chunk_count
     }
 
-@router.get("", response_model=List[DocumentResponse], summary="条件分页查询知识文档 (带产品权限隔离)")
+@router.get("", response_model=List[DocumentResponse], summary="条件分页查询知识文档 (带产品权限隔离与来源筛选)")
 async def list_documents(
     kb_id: Optional[str] = Query(None, description="知识库ID"),
     name: Optional[str] = Query(None, description="文档名称模糊匹配"),
     doc_type: Optional[str] = Query(None, description="类型: FAQ, MD, TXT"),
     priority: Optional[int] = Query(None, ge=1, le=5, description="优先级"),
     status: Optional[str] = Query(None, description="状态: ACTIVE, PENDING_REVIEW, REJECTED"),
+    source_origin: Optional[str] = Query(None, description="来源筛选: MANUAL_UPLOAD, FEISHU, YUQUE, WEB"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     current_user: CurrentUser = Depends(get_current_user),
@@ -340,10 +346,38 @@ async def list_documents(
         stmt = stmt.where(Document.priority == priority)
     if status:
         stmt = stmt.where(Document.status == status)
+    if source_origin:
+        stmt = stmt.where(Document.source_origin == source_origin.upper())
 
     stmt = stmt.order_by(Document.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
     res = await db.execute(stmt)
     return res.scalars().all()
+
+@router.post("/{doc_id}/sync", summary="触发知识文档重新同步与切片刷新")
+async def sync_document(
+    doc_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    doc = await db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    doc.updated_at = datetime.now()
+    doc.updated_by = current_user.username or "system"
+    doc.status = "ACTIVE"
+
+    # 执行向量切片更新
+    chunk_count = await index_document_chunks(doc, db)
+    await db.commit()
+    await db.refresh(doc)
+    return {
+        "success": True, 
+        "message": f"文档【{doc.name}】已成功触发最新同步并刷新切片索引",
+        "doc_id": doc.id,
+        "chunk_count": chunk_count,
+        "updated_at": doc.updated_at
+    }
 
 @router.get("/{doc_id}", summary="获取文档详情及切片信息")
 async def get_document_detail(doc_id: str, db: AsyncSession = Depends(get_db)):

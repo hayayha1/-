@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, update
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.db.session import get_db
 from app.models.tenant import Tenant
@@ -210,13 +211,19 @@ class ProductLineItemRequest(BaseModel):
 
 class StaffItemRequest(BaseModel):
     username: str = Field(..., description="账号用户名")
+    password: Optional[str] = Field("admin123", description="初始登录密码")
     role: str = Field(default="service_agent", description="角色: service_agent(人工客服) 或 knowledge_master(知识主管)")
     display_name: Optional[str] = Field(None, description="人员姓名或工号标识")
     name: Optional[str] = Field(None, description="人员姓名（兼容别名字段）")
-    product_code: str = Field(..., description="指派绑定的产品线编码")
+    real_name: Optional[str] = Field(None, description="真实姓名")
+    product_code: Optional[str] = Field("SAAS_CLOUD", description="指派绑定的产品线编码")
+    product_lines: Optional[List[str]] = Field(default_factory=list, description="绑定的产品线列表")
     group_name: Optional[str] = Field("默认客服组", description="业务分组名称")
-    max_concurrent_sessions: Optional[int] = Field(10, description="最大同时接待会话上限")
-    status: Optional[str] = Field("ONLINE", description="坐席状态: ONLINE, BUSY, OFFLINE")
+    max_concurrent_sessions: Optional[int] = Field(5, description="最大同时接待会话上限")
+    status: Optional[str] = Field("IDLE", description="坐席状态: IDLE(空闲), BUSY(接待中), ONLINE(上线), OFFLINE(下线)")
+
+class StaffStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="坐席状态: ONLINE(上线), OFFLINE(下线), IDLE(空闲), BUSY(接待中)")
 
 class TenantResponse(BaseModel):
     id: str
@@ -1280,6 +1287,8 @@ async def delete_product_line(
 @router.get("/current/staff", summary="查询客服与知识运营账号及分组列表")
 async def list_staff_members(
     product_code: Optional[str] = Query(None, description="按产品线/业务分组过滤"),
+    role: Optional[str] = Query(None, description="按角色过滤: service_agent / knowledge_master"),
+    status: Optional[str] = Query(None, description="按状态过滤: ONLINE / OFFLINE / IDLE / BUSY"),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1289,12 +1298,66 @@ async def list_staff_members(
     if not tenant:
         raise HTTPException(status_code=404, detail="租户不存在")
 
-    staff = tenant.staff_config or []
-    if product_code:
-        staff = [s for s in staff if s.get("product_code") == product_code]
+    raw_staff = tenant.staff_config or []
 
-    agent_count = len([s for s in (tenant.staff_config or []) if s.get("role") == "service_agent"])
-    km_count = len([s for s in (tenant.staff_config or []) if s.get("role") == "knowledge_master"])
+    # 统计各客服当前活跃会话数量 (HUMAN_CONNECTED 且未关闭)
+    active_counts = {}
+    try:
+        active_sessions_stmt = select(ChatSession.assigned_agent, func.count(ChatSession.id)).where(
+            ChatSession.tenant_id == target_code,
+            ChatSession.status == "HUMAN_CONNECTED"
+        ).group_by(ChatSession.assigned_agent)
+        active_counts = dict((await db.execute(active_sessions_stmt)).all())
+    except Exception:
+        active_counts = {}
+
+    enriched_staff = []
+    for s in raw_staff:
+        item = dict(s)
+        # 兼容 real_name / name / display_name
+        if not item.get("real_name"):
+            item["real_name"] = item.get("name") or item.get("display_name") or item.get("username")
+        if not item.get("display_name"):
+            item["display_name"] = item["real_name"]
+            
+        current_st = (item.get("status") or "IDLE").upper()
+        assigned_key = item.get("username") or item.get("user_id")
+        active_c = active_counts.get(assigned_key, 0)
+        item["active_sessions"] = active_c
+        item["max_concurrent"] = item.get("max_concurrent_sessions") or item.get("max_concurrent") or 5
+
+        # 动态计算 4 态：ONLINE, OFFLINE, IDLE, BUSY
+        if current_st == "OFFLINE":
+            item["status"] = "OFFLINE"
+        elif current_st == "BUSY" or active_c > 0:
+            item["status"] = "BUSY"
+        elif current_st in ["ONLINE", "IDLE"]:
+            item["status"] = current_st
+        else:
+            item["status"] = "IDLE"
+
+        enriched_staff.append(item)
+
+    # 组合多维过滤
+    if product_code:
+        enriched_staff = [
+            s for s in enriched_staff 
+            if s.get("product_code") == product_code 
+            or product_code in (s.get("product_lines") or [])
+        ]
+    if role:
+        enriched_staff = [
+            s for s in enriched_staff 
+            if s.get("role") == role 
+            or (role == "knowledge_master" and s.get("role") in ["knowledge_master", "operator"])
+            or (role == "service_agent" and s.get("role") in ["service_agent", "tech_agent"])
+        ]
+    if status:
+        target_status = status.upper()
+        enriched_staff = [s for s in enriched_staff if s.get("status") == target_status]
+
+    agent_count = len([s for s in (tenant.staff_config or []) if s.get("role") in ["service_agent", "tech_agent"]])
+    km_count = len([s for s in (tenant.staff_config or []) if s.get("role") in ["knowledge_master", "operator"]])
 
     return {
         "tenant_code": target_code,
@@ -1310,12 +1373,12 @@ async def list_staff_members(
                 "percent": round((km_count / max(tenant.max_km_seats, 1)) * 100, 1)
             }
         },
-        "staff": staff
+        "staff": enriched_staff
     }
 
 @router.post(
     "/current/staff", 
-    summary="新增人工客服或知识运营账号（严格检查坐席席位配额）",
+    summary="新增人工客服或知识运营账号（严格检查坐席席位配额并同步系统鉴权中心）",
     dependencies=[Depends(require_roles([ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN]))]
 )
 async def create_staff_member(
@@ -1331,39 +1394,99 @@ async def create_staff_member(
 
     staff = list(tenant.staff_config or [])
 
-    if payload.role == "service_agent":
-        agent_count = len([s for s in staff if s.get("role") == "service_agent"])
+    if payload.role in ["service_agent", "tech_agent"]:
+        agent_count = len([s for s in staff if s.get("role") in ["service_agent", "tech_agent"]])
         if agent_count >= tenant.max_seats:
             raise HTTPException(
                 status_code=400, 
                 detail=f"人工客服标准坐席已达配额上限（{tenant.max_seats} 席），请升级套餐或追加席位配额！"
             )
-    elif payload.role == "knowledge_master":
-        km_count = len([s for s in staff if s.get("role") == "knowledge_master"])
+    elif payload.role in ["knowledge_master", "operator"]:
+        km_count = len([s for s in staff if s.get("role") in ["knowledge_master", "operator"]])
         if km_count >= tenant.max_km_seats:
             raise HTTPException(
                 status_code=400, 
                 detail=f"知识主管运营坐席已达配额上限（{tenant.max_km_seats} 席），请升级套餐或追加席位配额！"
             )
 
+    from app.api.v1.auth import register_user_credential, ROLE_SERVICE_AGENT, ROLE_KNOWLEDGE_MASTER
+
+    clean_u = payload.username.strip().lower()
+    d_name = (payload.real_name or payload.display_name or payload.name or payload.username).strip()
+    p_lines = payload.product_lines if payload.product_lines else ([payload.product_code] if payload.product_code else ["SAAS_CLOUD"])
+    p_code = p_lines[0] if p_lines else "SAAS_CLOUD"
+    role_mapped = ROLE_SERVICE_AGENT if payload.role in ["service_agent", "tech_agent"] else ROLE_KNOWLEDGE_MASTER
+
+    # 核心：向鉴权中心注册登录凭证，使新坐席可立即真实登录
+    register_user_credential(
+        username=clean_u,
+        password=payload.password or "admin123",
+        role=role_mapped,
+        display_name=d_name,
+        tenant_id=target_code,
+        tenant_name=tenant.name,
+        product_code=p_code,
+        group_name=payload.group_name or "业务客服组"
+    )
+
     uid = f"user_{uuid.uuid4().hex[:6]}"
-    d_name = (payload.display_name or payload.name or payload.username).strip()
     new_staff = {
         "user_id": uid,
-        "username": payload.username.strip(),
+        "username": clean_u,
         "role": payload.role,
         "display_name": d_name,
         "name": d_name,
-        "product_code": payload.product_code,
+        "real_name": d_name,
+        "product_code": p_code,
+        "product_lines": p_lines,
         "group_name": payload.group_name or "业务服务组",
-        "max_concurrent_sessions": payload.max_concurrent_sessions or 10,
-        "status": payload.status or "ONLINE"
+        "max_concurrent_sessions": payload.max_concurrent_sessions or 5,
+        "max_concurrent": payload.max_concurrent_sessions or 5,
+        "status": (payload.status or "IDLE").upper()
     }
     staff.append(new_staff)
     tenant.staff_config = staff
+    flag_modified(tenant, "staff_config")
     await db.commit()
 
-    return {"success": True, "message": "人员账号已成功开通并分配分组", "staff": new_staff}
+    return {"success": True, "message": "人员账号已成功开通并同步注册凭据，支持即时登录", "staff": new_staff}
+
+@router.put(
+    "/current/staff/{user_id}/status", 
+    summary="更新坐席人员状态 (ONLINE, OFFLINE, IDLE, BUSY)",
+    dependencies=[Depends(require_roles([ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN, ROLE_SERVICE_AGENT, ROLE_KNOWLEDGE_MASTER]))]
+)
+async def update_staff_status(
+    user_id: str,
+    payload: StaffStatusUpdateRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    target_code = current_user.tenant_id or "tenant_default"
+    stmt = select(Tenant).where(Tenant.tenant_code == target_code)
+    tenant = (await db.execute(stmt)).scalars().first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="租户不存在")
+
+    staff = list(tenant.staff_config or [])
+    target = None
+    new_status = payload.status.upper()
+    if new_status not in ["ONLINE", "OFFLINE", "IDLE", "BUSY"]:
+        raise HTTPException(status_code=400, detail="无效状态，仅支持 ONLINE, OFFLINE, IDLE, BUSY")
+
+    for s in staff:
+        if s.get("user_id") == user_id or s.get("username") == user_id:
+            s["status"] = new_status
+            target = s
+            break
+
+    if not target:
+        raise HTTPException(status_code=404, detail=f"未找到工号/账号为 [{user_id}] 的人员")
+
+    tenant.staff_config = staff
+    flag_modified(tenant, "staff_config")
+    await db.commit()
+    return {"success": True, "message": f"状态已成功变更为 {new_status}", "staff": target}
 
 @router.delete(
     "/current/staff/{user_id}", 

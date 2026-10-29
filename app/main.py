@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from app.core.config import settings
 from app.db.session import init_db, async_session_maker
@@ -641,3 +641,7 @@ async def root():
     if os.path.exists(index_file):
         return FileResponse(index_file)
     return {"message": "智能客服知识库系统运行中", "docs": "/docs"}
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)

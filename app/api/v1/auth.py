@@ -28,6 +28,7 @@ class LoginRequest(BaseModel):
 class UserRegisterRequest(BaseModel):
     username: str = Field(..., description="登录账号")
     password: str = Field(..., description="登录密码")
+    account_type: Optional[str] = Field("end_user", description="账户类别: end_user (个人客户) 或 enterprise (企业用户)")
     company_name: Optional[str] = Field(None, description="企业全称（选填，用于订阅开通）")
     subdomain: Optional[str] = Field(None, description="期望子域名前缀（选填，如 zhike）")
     contact_name: Optional[str] = Field(None, description="联系人姓名（选填）")
@@ -368,30 +369,34 @@ async def register(payload: UserRegisterRequest):
         "industry": payload.industry or "SaaS"
     }
 
-    display_name = f"客户 · {payload.contact_name or u}"
+    is_enterprise = (payload.account_type == "enterprise") or bool(payload.company_name and payload.company_name.strip())
+    assigned_role = ROLE_TENANT_ADMIN if is_enterprise else ROLE_END_USER
+    tenant_name = payload.company_name.strip() if (payload.company_name and payload.company_name.strip()) else "云创智能科技"
+    display_name = f"企管 · {payload.contact_name or u}" if is_enterprise else f"客户 · {payload.contact_name or u}"
+
     register_user_credential(
         username=u,
         password=p,
-        role=ROLE_END_USER,
+        role=assigned_role,
         display_name=display_name,
         tenant_id="tenant_default",
-        tenant_name="云创智能科技",
+        tenant_name=tenant_name,
         product_code="SAAS_CLOUD",
-        group_name="云创云服务客服组",
+        group_name="云创企业服务组" if is_enterprise else "云创云服务客服组",
         enterprise_profile=ent_profile
     )
 
     return LoginResponse(
         user_id=u,
         username=u,
-        role=ROLE_END_USER,
+        role=assigned_role,
         display_name=display_name,
-        token=f"mock_jwt_token_for_{u}_{ROLE_END_USER}",
+        token=f"mock_jwt_token_for_{u}_{assigned_role}",
         tenant_id="tenant_default",
-        tenant_name="云创智能科技",
+        tenant_name=tenant_name,
         is_platform_admin=False,
         product_code="SAAS_CLOUD",
-        group_name="云创云服务客服组",
+        group_name="云创企业服务组" if is_enterprise else "云创云服务客服组",
         enterprise_profile=ent_profile
     )
 
