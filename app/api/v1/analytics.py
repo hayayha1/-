@@ -14,8 +14,7 @@ from app.core.auth import (
     ROLE_TECH_AGENT,
     ROLE_PLATFORM_ADMIN,
     ROLE_TENANT_ADMIN,
-    ROLE_KNOWLEDGE_MASTER,
-    ROLE_QA_SUPERVISOR
+    ROLE_KNOWLEDGE_MASTER
 )
 from app.models.chat_session import ChatSession, ChatMessage
 from app.models.bad_case import BadCase, BadCaseCluster
@@ -27,7 +26,7 @@ router = APIRouter(prefix="/analytics", tags=["运营数据报表看板"])
 @router.get(
     "/overview",
     summary="获取企业运营、质检与质量报表真实统计数据",
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_TENANT_ADMIN, ROLE_QA_SUPERVISOR, ROLE_KNOWLEDGE_MASTER, ROLE_OPERATOR]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_TENANT_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_OPERATOR]))]
 )
 async def get_analytics_overview(
     time_granularity: str = Query("day", pattern="^(hour|day|week|month)$", description="时间聚合粒度"),

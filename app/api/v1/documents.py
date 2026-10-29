@@ -18,6 +18,7 @@ from app.schemas.document import (
 )
 from app.services.chunking.splitter import DocumentChunker
 from app.services.model_service import model_service
+from app.models.tenant import Tenant
 from app.core.auth import (
     get_current_user, 
     CurrentUser, 
@@ -28,7 +29,6 @@ from app.core.auth import (
     ROLE_PLATFORM_ADMIN,
     ROLE_TENANT_ADMIN,
     ROLE_KNOWLEDGE_MASTER,
-    ROLE_QA_SUPERVISOR,
     ROLE_SERVICE_AGENT
 )
 
@@ -107,6 +107,17 @@ async def upload_document(
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="目标知识库不存在")
+
+    # 租户生命周期与单库文档配额检查
+    t_stmt = select(Tenant).where(Tenant.tenant_code == kb.tenant_id)
+    tenant = (await db.execute(t_stmt)).scalars().first()
+    if tenant:
+        if tenant.status == "FROZEN":
+            raise HTTPException(status_code=403, detail="该企业租户处于【业务冻结】状态，文档处理功能已锁定，仅保留只读权限")
+        elif tenant.status in ["DISABLED", "TERMINATED"]:
+            raise HTTPException(status_code=403, detail="该企业租户服务已暂停或注销")
+        if kb.doc_count >= tenant.max_docs_per_kb:
+            raise HTTPException(status_code=400, detail=f"已达当前套餐单库文档上限（{tenant.max_docs_per_kb} 篇/库），请升级套餐或追加配额！")
 
     # 权限隔离校验：技术客服只能向自己所属产品的知识库提交文档；运营专员只能向负责知识库提交
     if current_user.role == ROLE_TECH_AGENT:
@@ -452,12 +463,12 @@ async def update_document(
     await db.refresh(doc)
     return doc
 
-# ================= 知识文档审核流 (知识主管/企业超管/平台超管) =================
+# ================= 知识文档审核流 (知识主管/企业超管) =================
 
 @router.post(
     "/{doc_id}/approve", 
     summary="知识架构主管/企业超管审核通过知识文档 (触发自动切片与向量入库生效)",
-    dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))]
+    dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))]
 )
 async def approve_document(
     doc_id: str, 
@@ -486,7 +497,7 @@ async def approve_document(
 @router.post(
     "/{doc_id}/reject", 
     summary="知识架构主管/企业超管驳回知识文档",
-    dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))]
+    dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))]
 )
 async def reject_document(
     doc_id: str, 
@@ -562,7 +573,7 @@ async def rollback_document_version(
         db=db
     )
 
-@router.delete("/{doc_id}", summary="删除文档（级联清除所有切片与版本）", dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))])
+@router.delete("/{doc_id}", summary="删除文档（级联清除所有切片与版本）", dependencies=[Depends(require_roles([ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN, ROLE_ADMIN, ROLE_OPERATOR]))])
 async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)):
     doc = await db.get(Document, doc_id)
     if not doc:

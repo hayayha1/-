@@ -185,3 +185,119 @@ async def test_suspended_tenant_rejected():
         assert kb_res.status_code == 403
         assert "冻结" in kb_res.json()["detail"] or "暂停" in kb_res.json()["detail"]
 
+@pytest.mark.asyncio
+async def test_saas_onboarding_and_lifecycle_and_models():
+    """测试 SaaS 自动入驻、双模型连通性、产品线与坐席分组、弹性配额调整闭环"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. 官网企业在线购买与自动入驻
+        onboard_payload = {
+            "name": "星河医疗科技有限公司",
+            "credit_code": "91310115MA1H88888X",
+            "official_website": "https://www.xinghe-med.com",
+            "contact_name": "王院长",
+            "contact_phone": "13812345678",
+            "contact_email": "wang@xinghe-med.com",
+            "industry": "医疗",
+            "business_desc": "智慧医院数字问诊与导医服务",
+            "tier": "PROFESSIONAL",
+            "payment_method": "ONLINE_WECHAT"
+        }
+        res_ob = await client.post("/api/v1/tenants/onboard", json=onboard_payload)
+        assert res_ob.status_code == 200
+        ob_data = res_ob.json()
+        assert ob_data["success"] is True
+        new_tenant_code = ob_data["tenant_code"]
+        assert ob_data["allocated_quotas"]["product_lines"] == 3
+        assert ob_data["allocated_quotas"]["knowledge_bases"] == 8
+        assert ob_data["allocated_quotas"]["seats"] == 10
+        assert ob_data["allocated_quotas"]["km_seats"] == 2
+
+        # 2. 企业超管配置双模型与连通性自检
+        tenant_headers = {"X-User-Role": "tenant_admin", "X-User-Id": "admin_tenant", "X-Tenant-Id": new_tenant_code}
+        models_payload = {
+            "llm_config": {
+                "provider": "DeepSeek",
+                "model_name": "deepseek-chat",
+                "api_base": "https://api.deepseek.com",
+                "api_key": "sk-test-fake",
+                "temperature": 0.2,
+                "max_tokens": 1024
+            },
+            "embedding_config": {
+                "provider": "SiliconFlow",
+                "model_name": "BAAI/bge-large-zh-v1.5",
+                "api_base": "https://api.siliconflow.cn/v1",
+                "api_key": "sk-test-fake",
+                "dimensions": 1024,
+                "score_threshold": 0.60
+            }
+        }
+        res_cfg = await client.put("/api/v1/tenants/current/models", json=models_payload, headers=tenant_headers)
+        assert res_cfg.status_code == 200
+        assert res_cfg.json()["success"] is True
+
+        # 测试 LLM 连通性自检
+        test_llm_res = await client.post("/api/v1/tenants/current/models/test-llm", json={
+            "llm_config": models_payload["llm_config"],
+            "prompt": "连通性测试"
+        }, headers=tenant_headers)
+        assert test_llm_res.status_code == 200
+        assert test_llm_res.json()["success"] is True
+
+        # 测试 Embedding 连通性自检
+        test_emb_res = await client.post("/api/v1/tenants/current/models/test-embedding", json={
+            "embedding_config": models_payload["embedding_config"],
+            "text": "测试医疗问答向量"
+        }, headers=tenant_headers)
+        assert test_emb_res.status_code == 200
+        assert test_emb_res.json()["success"] is True
+        assert test_emb_res.json()["dimensions"] > 0
+
+        # 3. 产品线 1:N 树状管理与坐席分组
+        pl_payload = {
+            "code": "CLINIC_LINE",
+            "name": "在线挂号与门诊线",
+            "description": "提供预约挂号与科室指引",
+            "group_name": "门诊导医客服组"
+        }
+        res_pl = await client.post("/api/v1/tenants/current/product-lines", json=pl_payload, headers=tenant_headers)
+        assert res_pl.status_code == 200
+        assert res_pl.json()["product_line"]["code"] == "CLINIC_LINE"
+
+        # 查看产品线树状列表
+        res_pl_tree = await client.get("/api/v1/tenants/current/product-lines", headers=tenant_headers)
+        assert res_pl_tree.status_code == 200
+        assert res_pl_tree.json()["quota"]["used_lines"] >= 2
+
+        # 新增客服坐席并分配至该产品组
+        staff_payload = {
+            "username": "agent_med_01",
+            "role": "service_agent",
+            "display_name": "导医坐席·李护士",
+            "product_code": "CLINIC_LINE",
+            "group_name": "门诊导医客服组",
+            "max_concurrent_sessions": 8
+        }
+        res_staff = await client.post("/api/v1/tenants/current/staff", json=staff_payload, headers=tenant_headers)
+        assert res_staff.status_code == 200
+        assert res_staff.json()["staff"]["username"] == "agent_med_01"
+
+        # 4. 平台超管生命周期与非标弹性配额调整
+        platform_headers = {"X-User-Role": "platform_admin", "X-User-Id": "admin_platform"}
+        elastic_payload = {
+            "max_product_lines": 5,
+            "max_seats": 20,
+            "max_kbs": 15
+        }
+        res_elastic = await client.put(f"/api/v1/tenants/{new_tenant_code}/elastic-quota", json=elastic_payload, headers=platform_headers)
+        assert res_elastic.status_code == 200
+        assert res_elastic.json()["current_quotas"]["max_product_lines"] == 5
+        assert res_elastic.json()["current_quotas"]["max_seats"] == 20
+
+        # 查阅商业账务台账与履约到期监控
+        res_bill = await client.get(f"/api/v1/tenants/{new_tenant_code}/billing", headers=platform_headers)
+        assert res_bill.status_code == 200
+        assert res_bill.json()["days_left"] > 300
+        assert len(res_bill.json()["transactions"]) >= 1
+

@@ -114,6 +114,43 @@ async def init_db():
         except Exception as e:
             logger.warning(f"chat_sessions qa migration skipped: {e}")
 
+        # 兼容性迁移：确保 tenants 具备商业化配额与模型配置字段
+        try:
+            res = await conn.execute(text("PRAGMA table_info(tenants);"))
+            t_cols = [row[1] for row in res.fetchall()]
+            if t_cols:
+                for col_name, col_type in [
+                    ("credit_code", "VARCHAR(64)"),
+                    ("official_website", "VARCHAR(256)"),
+                    ("industry", "VARCHAR(64) DEFAULT 'SaaS'"),
+                    ("business_desc", "TEXT"),
+                    ("max_product_lines", "INTEGER DEFAULT 3"),
+                    ("max_km_seats", "INTEGER DEFAULT 2"),
+                    ("max_docs_per_kb", "INTEGER DEFAULT 10000"),
+                    ("subscribed_at", "DATETIME"),
+                    ("total_paid_amount", "FLOAT DEFAULT 0.0"),
+                    ("last_active_at", "DATETIME"),
+                    ("llm_config", "JSON"),
+                    ("embedding_config", "JSON"),
+                    ("product_lines", "JSON"),
+                    ("staff_config", "JSON")
+                ]:
+                    if col_name not in t_cols:
+                        await conn.execute(text(f"ALTER TABLE tenants ADD COLUMN {col_name} {col_type};"))
+                        logger.info(f"Auto migrated: added column '{col_name}' to table 'tenants'.")
+        except Exception as e:
+            logger.warning(f"tenants migration skipped: {e}")
+
+        # 兼容性迁移：确保 knowledge_bases 具备使用场景字段 usage_scope
+        try:
+            res = await conn.execute(text("PRAGMA table_info(knowledge_bases);"))
+            kb_cols = [row[1] for row in res.fetchall()]
+            if kb_cols and "usage_scope" not in kb_cols:
+                await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN usage_scope VARCHAR(32) DEFAULT 'BOT_AND_AGENT';"))
+                logger.info("Auto migrated: added column 'usage_scope' to table 'knowledge_bases'.")
+        except Exception as e:
+            logger.warning(f"knowledge_bases usage_scope migration skipped: {e}")
+
         logger.info("All database tables created or confirmed.")
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

@@ -11,15 +11,14 @@ async def setup_database():
 
 @pytest.mark.asyncio
 async def test_roles_authentication_and_headers():
-    """测试两级六角色的请求头上下文注入与登录验证"""
+    """测试两级五角色体系（已删除质检主管角色）的请求头上下文注入与登录验证"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        # 1. 登录验证
+        # 1. 有效五角色登录验证
         roles_to_test = [
             ("platform_admin", "admin123", "platform_admin"),
             ("tenant_admin", "admin123", "tenant_admin"),
             ("knowledge_master", "km123", "knowledge_master"),
-            ("qa_supervisor", "qa123", "qa_supervisor"),
             ("service_agent", "agent123", "service_agent"),
             ("end_user", "user123", "end_user"),
         ]
@@ -29,6 +28,14 @@ async def test_roles_authentication_and_headers():
             data = res.json()
             assert data["role"] == expected_role
             assert data["username"] == uname
+            # 确认除平台超管外，其余角色均处于统一租户与产品组
+            if expected_role != "platform_admin":
+                assert data["tenant_id"] == "tenant_default"
+                assert data["product_code"] == "SAAS_CLOUD"
+
+        # 2. 确认已彻底删除质检主管角色账号
+        res_qa = await ac.post("/api/v1/auth/login", json={"username": "qa_supervisor", "password": "any"})
+        assert res_qa.status_code == 401
 
 @pytest.mark.asyncio
 async def test_platform_vs_tenant_admin_matrix():
@@ -64,6 +71,23 @@ async def test_platform_vs_tenant_admin_matrix():
 
         res = await ac.put("/api/v1/tenants/tenant_default/brand", json=brand_payload, headers=agent_headers)
         assert res.status_code == 403
+
+        # 3. 平台超管严禁窥视企业私有数据（知识库、会话、文档），企业超管允许管理本租户数据
+        res_platform_sessions = await ac.get("/api/v1/chat/sessions", headers=platform_headers)
+        assert res_platform_sessions.status_code == 403
+
+        res_platform_kbs = await ac.get("/api/v1/kbs", headers=platform_headers)
+        assert res_platform_kbs.status_code == 403
+
+        res_platform_docs = await ac.get("/api/v1/documents", headers=platform_headers)
+        assert res_platform_docs.status_code == 403
+
+        # 企业超管有权访问本租户知识库和会话
+        res_tenant_kbs = await ac.get("/api/v1/kbs", headers=tenant_headers)
+        assert res_tenant_kbs.status_code == 200
+
+        res_tenant_sessions = await ac.get("/api/v1/chat/sessions", headers=tenant_headers)
+        assert res_tenant_sessions.status_code == 200
 
 @pytest.mark.asyncio
 async def test_knowledge_draft_and_approval_closed_loop():
@@ -108,44 +132,49 @@ async def test_knowledge_draft_and_approval_closed_loop():
 
 @pytest.mark.asyncio
 async def test_qa_review_and_agent_reassign_closed_loop():
-    """测试质检主管质检打分、BadCase联动与坐席改派闭环"""
+    """测试企业管理员执行质检打分、BadCase联动与坐席改派闭环（质检主管角色已删除）"""
     transport = ASGITransport(app=app)
-    qa_headers = {"X-User-Role": "qa_supervisor", "X-User-Id": "qa_001", "X-Tenant-Id": "tenant_default"}
+    admin_headers = {"X-User-Role": "tenant_admin", "X-User-Id": "admin_tenant", "X-Tenant-Id": "tenant_default"}
     agent_headers = {"X-User-Role": "service_agent", "X-User-Id": "agent_1028", "X-Tenant-Id": "tenant_default"}
+    qa_headers = {"X-User-Role": "qa_supervisor", "X-User-Id": "qa_001", "X-Tenant-Id": "tenant_default"}
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        # 1. 质检主管可查看全租户会话列表
-        sessions_res = await ac.get("/api/v1/chat/sessions", headers=qa_headers)
+        # 1. 已删除的质检主管角色请求 -> 必须被 403 拒绝
+        qa_rejected = await ac.get("/api/v1/chat/sessions", headers=qa_headers)
+        assert qa_rejected.status_code == 403
+
+        # 2. 企业超管可查看全租户会话列表
+        sessions_res = await ac.get("/api/v1/chat/sessions", headers=admin_headers)
         assert sessions_res.status_code == 200
         sessions = sessions_res.json()
         assert len(sessions) >= 1
         target_session = sessions[0]
         sess_id = target_session["id"]
 
-        # 2. 坐席试图越权质检评分 -> 必须被 403 拦截
+        # 3. 坐席试图越权质检评分 -> 必须被 403 拦截
         fail_qa = await ac.post(f"/api/v1/chat/sessions/{sess_id}/qa-review", json={
             "score": 4,
             "feedback": "客服越权质检"
         }, headers=agent_headers)
         assert fail_qa.status_code == 403
 
-        # 3. 质检主管进行质检评分与打标，并勾选一键推送到 BadCase 待办池
+        # 4. 企业管理员进行质检评分与打标，并勾选一键推送到 BadCase 待办池
         qa_res = await ac.post(f"/api/v1/chat/sessions/{sess_id}/qa-review", json={
             "score": 2,
             "feedback": "坐席应答延迟偏高，专业安抚术语欠缺",
             "tags": ["服务超时", "沟通生硬"],
             "push_to_badcase": True
-        }, headers=qa_headers)
+        }, headers=admin_headers)
         assert qa_res.status_code == 200
         assert qa_res.json()["qa_score"] == 2
         assert qa_res.json()["pushed_to_badcase"] is True
         assert qa_res.json()["badcase_id"] is not None
 
-        # 4. 质检主管针对该疑难会话执行坐席改派调度
+        # 5. 管理员针对该疑难会话执行坐席改派调度
         reassign_res = await ac.post(f"/api/v1/chat/sessions/{sess_id}/reassign", json={
             "target_agent": "agent_1029",
             "reason": "客户疑难技术问题升级至资深专员处理"
-        }, headers=qa_headers)
+        }, headers=admin_headers)
         assert reassign_res.status_code == 200
         assert reassign_res.json()["assigned_agent"] == "agent_1029"
 
@@ -153,18 +182,19 @@ async def test_qa_review_and_agent_reassign_closed_loop():
 async def test_user_profile_data_privacy_matrix():
     """测试用户画像的权限分层与脱敏合规"""
     transport = ASGITransport(app=app)
-    qa_headers = {"X-User-Role": "qa_supervisor", "X-User-Id": "qa_001", "X-Tenant-Id": "tenant_default"}
+    admin_headers = {"X-User-Role": "tenant_admin", "X-User-Id": "admin_tenant", "X-Tenant-Id": "tenant_default"}
     agent_headers = {"X-User-Role": "service_agent", "X-User-Id": "agent_1028", "X-Tenant-Id": "tenant_default"}
     km_headers = {"X-User-Role": "knowledge_master", "X-User-Id": "km_001", "X-Tenant-Id": "tenant_default"}
     platform_headers = {"X-User-Role": "platform_admin", "X-User-Id": "admin_platform", "X-Tenant-Id": "tenant_default"}
     user_headers = {"X-User-Role": "end_user", "X-User-Id": "user_001", "X-Tenant-Id": "tenant_default"}
+    qa_headers = {"X-User-Role": "qa_supervisor", "X-User-Id": "qa_001", "X-Tenant-Id": "tenant_default"}
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        # 1. 质检主管调阅客户画像 -> 允许且完整查看
-        res_qa = await ac.get("/api/v1/chat/user-profile?customer_id=U10086", headers=qa_headers)
-        assert res_qa.status_code == 200
-        profile_qa = res_qa.json()
-        assert profile_qa["vip_level"] == "企业VIP"
+        # 1. 企业管理员调阅客户画像 -> 允许查看
+        res_admin = await ac.get("/api/v1/chat/user-profile?customer_id=U10086", headers=admin_headers)
+        assert res_admin.status_code == 200
+        profile_admin = res_admin.json()
+        assert profile_admin["vip_level"] == "企业VIP"
 
         # 2. 一线技术坐席调阅 -> 允许，但手机号必须合规脱敏
         res_agent = await ac.get("/api/v1/chat/user-profile?customer_id=U10086", headers=agent_headers)
@@ -179,6 +209,10 @@ async def test_user_profile_data_privacy_matrix():
         res_km = await ac.get("/api/v1/chat/user-profile?customer_id=U10086", headers=km_headers)
         assert res_km.status_code == 403
 
-        # 4. 终端普通用户越权查看他人画像 -> 必须 403 拦截
+        # 4. 已删除的质检主管角色访问 -> 必须 403 拦截
+        res_qa = await ac.get("/api/v1/chat/user-profile?customer_id=U10086", headers=qa_headers)
+        assert res_qa.status_code == 403
+
+        # 5. 终端普通用户越权查看他人画像 -> 必须 403 拦截
         res_user_other = await ac.get("/api/v1/chat/user-profile?customer_id=OTHER_9999", headers=user_headers)
         assert res_user_other.status_code == 403

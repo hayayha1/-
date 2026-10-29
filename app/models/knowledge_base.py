@@ -14,6 +14,12 @@ class KnowledgeBase(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(128), nullable=False, comment="知识库名称")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="知识库描述")
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE", nullable=False, comment="状态：ACTIVE/INACTIVE")
+    usage_scope: Mapped[str] = mapped_column(
+        String(32), 
+        default="BOT_AND_AGENT", 
+        nullable=False, 
+        comment="使用场景: BOT_AND_AGENT(前台机器人直接调用) / AGENT_ONLY(仅供内部人工客服坐席参考)"
+    )
     doc_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="知识文档数量")
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="切片总数")
     

@@ -26,8 +26,10 @@ async def seed_demo_data():
     async with async_session_maker() as db:
         # 0. 确保多租户种子数据初始化
         from app.models.tenant import Tenant
-        t_res = await db.execute(select(Tenant).limit(1))
-        if not t_res.scalars().first():
+        import datetime
+        t_res = await db.execute(select(Tenant).where(Tenant.tenant_code == "tenant_default"))
+        t_default = t_res.scalars().first()
+        if not t_default:
             t1 = Tenant(
                 tenant_code="tenant_default",
                 name="云创智能科技有限公司",
@@ -36,12 +38,69 @@ async def seed_demo_data():
                 contact_name="云创超管",
                 contact_phone="400-888-9999",
                 contact_email="admin@yunchuang.ai",
+                credit_code="91110108MA01ABC888",
+                official_website="https://www.yunchuang.ai",
+                industry="SaaS",
+                business_desc="企业级智能客服与多模态知识协作软件",
+                max_product_lines=10,
                 max_seats=30,
-                max_kbs=50,
-                monthly_token_quota=5000000,
+                max_km_seats=5,
+                max_kbs=30,
+                max_docs_per_kb=50000,
+                monthly_token_quota=20000000,
                 used_tokens=142600,
-                monthly_query_quota=100000,
+                monthly_query_quota=1000000,
                 used_queries=3280,
+                subscribed_at=datetime.datetime.now() - datetime.timedelta(days=60),
+                expires_at=datetime.datetime.now() + datetime.timedelta(days=305),
+                total_paid_amount=59800.0,
+                last_active_at=datetime.datetime.now(),
+                llm_config={
+                    "provider": "DeepSeek",
+                    "model_name": "deepseek-chat",
+                    "api_base": "https://api.deepseek.com",
+                    "api_key": "",
+                    "temperature": 0.2,
+                    "max_tokens": 2048
+                },
+                embedding_config={
+                    "provider": "SiliconFlow",
+                    "model_name": "BAAI/bge-large-zh-v1.5",
+                    "api_base": "https://api.siliconflow.cn/v1",
+                    "api_key": "",
+                    "dimensions": 1024,
+                    "score_threshold": 0.50
+                },
+                product_lines=[
+                    {
+                        "code": "SAAS_CLOUD",
+                        "name": "智能云平台服务线",
+                        "description": "面向企业级SaaS订阅与云服务",
+                        "group_name": "云创云服务客服组",
+                        "created_at": "2026-10-01 10:00:00"
+                    }
+                ],
+                staff_config=[
+                    {
+                        "user_id": "agent_1028",
+                        "username": "service_agent",
+                        "role": "service_agent",
+                        "display_name": "一线技术客服坐席 (工号#1028)",
+                        "product_code": "SAAS_CLOUD",
+                        "group_name": "云创云服务客服组",
+                        "max_concurrent_sessions": 10,
+                        "status": "ONLINE"
+                    },
+                    {
+                        "user_id": "km_001",
+                        "username": "knowledge_master",
+                        "role": "knowledge_master",
+                        "display_name": "知识库架构主管 (工号#km01)",
+                        "product_code": "SAAS_CLOUD",
+                        "group_name": "云创云服务客服组",
+                        "status": "ONLINE"
+                    }
+                ],
                 brand_config={
                     "brand_name": "云创企业智能客服平台",
                     "bot_name": "小创助理",
@@ -59,12 +118,19 @@ async def seed_demo_data():
                 contact_name="林经理",
                 contact_phone="139-1122-3344",
                 contact_email="lin@speedretail.cn",
+                max_product_lines=3,
                 max_seats=10,
-                max_kbs=5,
-                monthly_token_quota=2000000,
+                max_km_seats=2,
+                max_kbs=8,
+                max_docs_per_kb=10000,
+                monthly_token_quota=5000000,
                 used_tokens=560000,
-                monthly_query_quota=30000,
+                monthly_query_quota=200000,
                 used_queries=8920,
+                subscribed_at=datetime.datetime.now() - datetime.timedelta(days=30),
+                expires_at=datetime.datetime.now() + datetime.timedelta(days=335),
+                total_paid_amount=9800.0,
+                last_active_at=datetime.datetime.now(),
                 brand_config={
                     "brand_name": "极速新零售智能客服",
                     "bot_name": "极小速",
@@ -82,12 +148,19 @@ async def seed_demo_data():
                 contact_name="陈总监",
                 contact_phone="137-8899-0011",
                 contact_email="chen@hengxinto.com",
+                max_product_lines=1,
                 max_seats=3,
+                max_km_seats=1,
                 max_kbs=2,
-                monthly_token_quota=500000,
+                max_docs_per_kb=1000,
+                monthly_token_quota=1000000,
                 used_tokens=85000,
-                monthly_query_quota=5000,
+                monthly_query_quota=50000,
                 used_queries=1120,
+                subscribed_at=datetime.datetime.now() - datetime.timedelta(days=10),
+                expires_at=datetime.datetime.now() + datetime.timedelta(days=20),
+                total_paid_amount=0.0,
+                last_active_at=datetime.datetime.now(),
                 brand_config={
                     "brand_name": "恒信智投尊享客服",
                     "bot_name": "恒小智",
@@ -98,6 +171,51 @@ async def seed_demo_data():
                 }
             )
             db.add_all([t1, t2, t3])
+            await db.commit()
+        else:
+            # 补全可能缺失的字段
+            if not t_default.product_lines:
+                t_default.product_lines = [
+                    {
+                        "code": "SAAS_CLOUD",
+                        "name": "智能云平台服务线",
+                        "description": "面向企业级SaaS订阅与云服务",
+                        "group_name": "云创云服务客服组",
+                        "created_at": "2026-10-01 10:00:00"
+                    }
+                ]
+            if not t_default.staff_config:
+                t_default.staff_config = [
+                    {
+                        "user_id": "agent_1028",
+                        "username": "service_agent",
+                        "role": "service_agent",
+                        "display_name": "一线技术客服坐席 (工号#1028)",
+                        "product_code": "SAAS_CLOUD",
+                        "group_name": "云创云服务客服组",
+                        "max_concurrent_sessions": 10,
+                        "status": "ONLINE"
+                    },
+                    {
+                        "user_id": "km_001",
+                        "username": "knowledge_master",
+                        "role": "knowledge_master",
+                        "display_name": "知识库架构主管 (工号#km01)",
+                        "product_code": "SAAS_CLOUD",
+                        "group_name": "云创云服务客服组",
+                        "status": "ONLINE"
+                    }
+                ]
+            if not t_default.max_product_lines:
+                t_default.max_product_lines = 10
+            if not t_default.max_km_seats:
+                t_default.max_km_seats = 5
+            if not t_default.max_docs_per_kb:
+                t_default.max_docs_per_kb = 50000
+            if not t_default.total_paid_amount:
+                t_default.total_paid_amount = 59800.0
+            if not t_default.expires_at:
+                t_default.expires_at = datetime.datetime.now() + datetime.timedelta(days=305)
             await db.commit()
 
         # 0.1 确保极速新零售集团有演示隔离知识库
@@ -235,10 +353,12 @@ async def seed_demo_data():
         
         # 1. 创建默认演示知识库
         demo_kb = KnowledgeBase(
+            tenant_id="tenant_default",
             product_code="SAAS_CLOUD",
             name="智能云平台服务与售后知识库",
             description="覆盖SaaS平台账号管理、退款售后规范、计费规则与发票开具指引。",
             status="ACTIVE",
+            usage_scope="BOT_AND_AGENT",
             doc_count=0,
             chunk_count=0,
             config={

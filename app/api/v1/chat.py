@@ -32,7 +32,6 @@ from app.core.auth import (
     ROLE_PLATFORM_ADMIN,
     ROLE_TENANT_ADMIN,
     ROLE_KNOWLEDGE_MASTER,
-    ROLE_QA_SUPERVISOR,
     ROLE_SERVICE_AGENT,
     ROLE_END_USER,
     AGENT_PRODUCT_MAP
@@ -52,7 +51,7 @@ PRODUCT_DEFAULT_AGENT = {
     "/sessions", 
     response_model=List[ChatSessionResponse], 
     summary="查询多客户客服会话列表",
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_QA_SUPERVISOR, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT, ROLE_END_USER, ROLE_USER]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT, ROLE_END_USER, ROLE_USER]))]
 )
 async def list_chat_sessions(
     product_code: Optional[str] = Query(None, description="产品线筛选"),
@@ -63,6 +62,9 @@ async def list_chat_sessions(
     stmt = select(ChatSession)
     target_tenant = current_user.tenant_id or "tenant_default"
     stmt = stmt.where(ChatSession.tenant_id == target_tenant)
+
+    if current_user.role == ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="平台超级管理员无权窥视各企业私有客户会话")
 
     # 普通客户行级隔离
     if current_user.is_end_user:
@@ -203,8 +205,12 @@ async def chat_interaction(
             db.add(session)
             await db.flush()
 
-    # 4.2 若是技术客服或人工接管状态下的管理员发送消息，则直接作为人工客服消息入库
-    if current_user.role == ROLE_TECH_AGENT or (current_user.role == ROLE_ADMIN and session.status == "HUMAN_CONNECTED"):
+    # 平台超管严禁接入人工会话
+    if current_user.role == ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="平台超级管理员无权作为人工客服发言或交互")
+
+    # 4.2 若是一线客服坐席或人工接管状态下的企业超管发送消息，则直接作为人工客服消息入库
+    if current_user.is_service_agent or (current_user.role in [ROLE_TENANT_ADMIN, ROLE_ADMIN] and session.status == "HUMAN_CONNECTED"):
         agent_name = current_user.user_id if current_user.user_id != "system" else "客服专员"
         human_msg = ChatMessage(
             session_id=session.id,
@@ -508,7 +514,7 @@ async def hangup_human_service(session_id: str = Query(...), db: AsyncSession = 
 @router.post(
     "/finish-human", 
     summary="结束人工客服会话返回AI",
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_QA_SUPERVISOR, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT]))]
 )
 async def finish_human_service(session_id: str = Query(...), db: AsyncSession = Depends(get_db)):
     session = await db.get(ChatSession, session_id)
@@ -530,11 +536,11 @@ async def finish_human_service(session_id: str = Query(...), db: AsyncSession = 
     await db.commit()
     return {"status": "AI_SERVICE", "message": "已恢复AI客服接待"}
 
-# 7.1 质检主管质检打分与评语
+# 7.1 企业管理员会话服务质检打分与评语
 @router.post(
     "/sessions/{session_id}/qa-review",
-    summary="质检主管对客服会话进行质检评分与打标",
-    dependencies=[Depends(require_roles([ROLE_QA_SUPERVISOR, ROLE_TENANT_ADMIN, ROLE_ADMIN]))]
+    summary="管理员对客服会话进行质检评分与打标",
+    dependencies=[Depends(require_roles([ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN]))]
 )
 async def qa_review_session(
     session_id: str,
@@ -579,7 +585,7 @@ async def qa_review_session(
             message_id=last_msg.id if last_msg else str(uuid.uuid4()),
             case_type="QA_REVIEW",
             user_query=query_text,
-            user_feedback_comment=f"质检主管质检不合格({payload.score}分): {payload.feedback or ''} 标签: {','.join(payload.tags)}",
+            user_feedback_comment=f"服务质检不合格({payload.score}分): {payload.feedback or ''} 标签: {','.join(payload.tags)}",
             ai_raw_response=answer_text,
             recall_sources=last_msg.sources if last_msg and last_msg.sources else [],
             confidence_score=last_msg.confidence_score if last_msg else 0.0,
@@ -608,11 +614,11 @@ async def qa_review_session(
         "badcase_id": created_badcase_id
     }
 
-# 7.2 质检主管或管理员改派调度坐席
+# 7.2 企业管理员改派调度坐席
 @router.post(
     "/sessions/{session_id}/reassign",
-    summary="质检主管或企业管理员强制改派客服坐席",
-    dependencies=[Depends(require_roles([ROLE_QA_SUPERVISOR, ROLE_TENANT_ADMIN, ROLE_ADMIN]))]
+    summary="企业管理员强制改派客服坐席",
+    dependencies=[Depends(require_roles([ROLE_TENANT_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_ADMIN]))]
 )
 async def reassign_session_agent(
     session_id: str,
@@ -632,7 +638,7 @@ async def reassign_session_agent(
     sys_msg = ChatMessage(
         session_id=session.id,
         role="system",
-        content=f"质检主管已将会话由客服【{old_agent or '系统待分配'}】重新改派调度至资深专家坐席【{payload.target_agent}】协助处理{reason_text}。",
+        content=f"管理员已将会话由客服【{old_agent or '系统待分配'}】重新改派调度至坐席【{payload.target_agent}】协助处理{reason_text}。",
         reply_type="SYSTEM"
     )
     db.add(sys_msg)

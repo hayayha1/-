@@ -32,7 +32,6 @@ from app.core.auth import (
     ROLE_PLATFORM_ADMIN,
     ROLE_TENANT_ADMIN,
     ROLE_KNOWLEDGE_MASTER,
-    ROLE_QA_SUPERVISOR,
     ROLE_SERVICE_AGENT,
     ROLE_END_USER
 )
@@ -254,8 +253,8 @@ async def submit_user_feedback(
 
 @router.post(
     "/agent-label", 
-    summary="坐席/质检人工介入标注 (客服与质检工作台)",
-    dependencies=[Depends(require_roles([ROLE_QA_SUPERVISOR, ROLE_SERVICE_AGENT, ROLE_TECH_AGENT, ROLE_TENANT_ADMIN, ROLE_ADMIN]))]
+    summary="坐席/管理员人工介入标注 (客服工作台)",
+    dependencies=[Depends(require_roles([ROLE_SERVICE_AGENT, ROLE_TECH_AGENT, ROLE_TENANT_ADMIN, ROLE_ADMIN]))]
 )
 async def submit_agent_label(
     payload: AgentLabelRequest,
@@ -324,7 +323,7 @@ async def submit_agent_label(
 @router.get(
     "/list", 
     summary="分页多维筛选全量 BadCase 池 (含未成簇长尾与已归簇 Case)",
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_OPERATOR]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_OPERATOR, ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN]))]
 )
 async def list_all_badcases(
     kb_id: Optional[str] = Query(None, description="知识库ID"),
@@ -575,7 +574,7 @@ async def trigger_clustering(
 @router.get(
     "/clusters", 
     summary="分页获取按热度降序的问题簇列表",
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_OPERATOR]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_OPERATOR, ROLE_KNOWLEDGE_MASTER, ROLE_TENANT_ADMIN]))]
 )
 async def list_clusters(
     kb_id: Optional[str] = Query(None, description="按知识库筛选"),

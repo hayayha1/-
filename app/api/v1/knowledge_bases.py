@@ -9,7 +9,18 @@ from app.models.document import Document
 from app.models.chunk import DocumentChunk
 from app.models.tenant import Tenant
 from app.schemas.knowledge_base import KBCreate, KBUpdate, KBResponse
-from app.core.auth import get_current_user, CurrentUser, require_roles, ROLE_ADMIN, ROLE_TECH_AGENT, ROLE_OPERATOR
+from app.core.auth import (
+    get_current_user, 
+    CurrentUser, 
+    require_roles, 
+    ROLE_ADMIN, 
+    ROLE_TENANT_ADMIN,
+    ROLE_KNOWLEDGE_MASTER,
+    ROLE_TECH_AGENT, 
+    ROLE_SERVICE_AGENT,
+    ROLE_OPERATOR,
+    ROLE_PLATFORM_ADMIN
+)
 
 router = APIRouter(
     prefix="/kbs", 
@@ -20,7 +31,7 @@ router = APIRouter(
     "", 
     response_model=KBResponse, 
     summary="创建不同产品对应的知识库（支持租户配额校验）",
-    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_OPERATOR]))]
 )
 async def create_knowledge_base(
     payload: KBCreate, 
@@ -33,8 +44,8 @@ async def create_knowledge_base(
     tenant_stmt = select(Tenant).where(Tenant.tenant_code == target_tenant)
     tenant = (await db.execute(tenant_stmt)).scalars().first()
     if tenant:
-        if tenant.status == "SUSPENDED":
-            raise HTTPException(status_code=403, detail="当前企业租户服务已被暂停或冻结，无法创建新知识库")
+        if tenant.status in ["FROZEN", "SUSPENDED", "DISABLED", "TERMINATED"]:
+            raise HTTPException(status_code=403, detail="当前企业租户服务处于冻结或停用状态，无法创建新知识库")
         
         current_kb_count = (await db.execute(
             select(func.count(KnowledgeBase.id)).where(KnowledgeBase.tenant_id == target_tenant)
@@ -61,6 +72,7 @@ async def create_knowledge_base(
         product_code=payload.product_code,
         name=payload.name,
         description=payload.description,
+        usage_scope=payload.usage_scope or "BOT_AND_AGENT",
         config=payload.config.model_dump() if payload.config else {},
         created_by=payload.created_by or current_user.user_id,
         updated_by=payload.created_by or current_user.user_id
@@ -74,13 +86,16 @@ async def create_knowledge_base(
     "", 
     response_model=List[KBResponse], 
     summary="查询知识库列表 (按租户与运营隔离)",
-    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_OPERATOR]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_OPERATOR]))]
 )
 async def list_knowledge_bases(
     product_code: Optional[str] = Query(None, description="按产品编码过滤"),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if current_user.role == ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="平台管理员无权访问租户私有知识库")
+
     stmt = select(KnowledgeBase)
     target_tenant = current_user.tenant_id or "tenant_default"
 
@@ -88,12 +103,14 @@ async def list_knowledge_bases(
     stmt = stmt.where(KnowledgeBase.tenant_id == target_tenant)
     
     # 权限与数据隔离：技术客服只能看归属产品，运营专员只能看负责知识库
-    if current_user.role == ROLE_TECH_AGENT:
+    if current_user.role in [ROLE_TECH_AGENT, ROLE_SERVICE_AGENT]:
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         stmt = stmt.where(KnowledgeBase.product_code == allowed_product)
-    elif current_user.role == ROLE_OPERATOR:
-        assigned_kb = current_user.assigned_kb_id or "b34fb60a-392c-4bb2-9e10-57539b37fed2"
-        stmt = stmt.where(KnowledgeBase.id == assigned_kb)
+    elif current_user.role in [ROLE_OPERATOR, ROLE_KNOWLEDGE_MASTER]:
+        if current_user.assigned_kb_id:
+            stmt = stmt.where(KnowledgeBase.id == current_user.assigned_kb_id)
+        elif product_code:
+            stmt = stmt.where(KnowledgeBase.product_code == product_code)
     elif product_code:
         stmt = stmt.where(KnowledgeBase.product_code == product_code)
 
@@ -107,6 +124,9 @@ async def get_knowledge_base(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if current_user.role == ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="平台管理员无权访问租户私有知识库")
+
     stmt = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
     res = await db.execute(stmt)
     kb = res.scalars().first()
@@ -114,11 +134,11 @@ async def get_knowledge_base(
         raise HTTPException(status_code=404, detail="知识库不存在")
     
     # 租户隔离校验
-    if not current_user.is_platform_admin and kb.tenant_id != (current_user.tenant_id or "tenant_default"):
+    if kb.tenant_id != (current_user.tenant_id or "tenant_default"):
         raise HTTPException(status_code=403, detail="跨租户越权访问知识库被拒绝")
 
     # 技术客服跨产品线越权访问校验
-    if current_user.role == ROLE_TECH_AGENT:
+    if current_user.role in [ROLE_TECH_AGENT, ROLE_SERVICE_AGENT]:
         allowed_product = current_user.product_code or "SAAS_CLOUD"
         if kb.product_code != allowed_product:
             raise HTTPException(status_code=403, detail="权限不足：您无权查阅非本产品归属的知识库")
@@ -129,7 +149,7 @@ async def get_knowledge_base(
     "/{kb_id}", 
     response_model=KBResponse, 
     summary="编辑知识库基本信息与检索参数",
-    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN, ROLE_KNOWLEDGE_MASTER, ROLE_OPERATOR]))]
 )
 async def update_knowledge_base(
     kb_id: str, 
@@ -137,19 +157,24 @@ async def update_knowledge_base(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if current_user.role == ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="平台管理员无权修改租户私有知识库")
+
     stmt = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
     res = await db.execute(stmt)
     kb = res.scalars().first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
 
-    if not current_user.is_platform_admin and kb.tenant_id != (current_user.tenant_id or "tenant_default"):
+    if kb.tenant_id != (current_user.tenant_id or "tenant_default"):
         raise HTTPException(status_code=403, detail="跨租户越权修改知识库被拒绝")
 
     if payload.name is not None:
         kb.name = payload.name
     if payload.description is not None:
         kb.description = payload.description
+    if payload.usage_scope is not None:
+        kb.usage_scope = payload.usage_scope
     if payload.status is not None:
         kb.status = payload.status
     if payload.config is not None:
@@ -166,20 +191,23 @@ async def update_knowledge_base(
 @router.delete(
     "/{kb_id}", 
     summary="删除知识库（级联删除全部关联文档与切片）",
-    dependencies=[Depends(require_roles([ROLE_ADMIN]))]
+    dependencies=[Depends(require_roles([ROLE_ADMIN, ROLE_TENANT_ADMIN]))]
 )
 async def delete_knowledge_base(
     kb_id: str, 
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if current_user.role == ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="平台管理员无权删除租户私有知识库")
+
     stmt = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
     res = await db.execute(stmt)
     kb = res.scalars().first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
 
-    if not current_user.is_platform_admin and kb.tenant_id != (current_user.tenant_id or "tenant_default"):
+    if kb.tenant_id != (current_user.tenant_id or "tenant_default"):
         raise HTTPException(status_code=403, detail="跨租户越权删除知识库被拒绝")
 
     await db.delete(kb)
